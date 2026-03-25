@@ -1,4 +1,4 @@
-package com.diana.auditinsightbackendspringboot.modules.auth.enity;
+package com.diana.auditinsightbackendspringboot.modules.auth.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
@@ -9,11 +9,11 @@ import lombok.*;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class user {
+public class User {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private long id;
+    private Long id;
 
     @Column(unique = true, nullable = false)
     private String email;
