@@ -5,5 +5,8 @@ import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
+@Data
 public class SignupRequest {
+    @NotBlank
+    private String fullName;
 }
