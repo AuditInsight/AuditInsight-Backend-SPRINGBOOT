@@ -9,4 +9,7 @@ import jakarta.validation.constraints.Size;
 public class SignupRequest {
     @NotBlank
     private String fullName;
+
+    @Email
+    private String email;
 }
