@@ -20,4 +20,10 @@ public class AuthService {
         this.otpService = otpService;
     }
  // SIGNUP
+    public User signup(SignupRequest request) {
+        if(userRepository.findByEmail(request.getEmail()).isPresent()) {
+            throw new RuntimeException("Email already exist")
+        }
+
+    }
 }
