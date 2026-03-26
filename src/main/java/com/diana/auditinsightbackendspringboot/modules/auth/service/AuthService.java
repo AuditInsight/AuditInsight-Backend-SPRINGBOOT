@@ -14,7 +14,7 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final OtpService otpService;
 
-    public AuthService(UserRepository userRepository,PasswordEncoder passwordEncoder,OtpService otpService) {
+    public AuthService(UserRepository userRepository,PasswordEncoder PasswordEncoder,OtpService otpService) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.otpService = otpService;
