@@ -38,4 +38,10 @@ public class AuthController {
         authService.resetPassword(request);
         return ResponseEntity.ok("Password reset successful.");
     }
+
+    @PostMapping("/verify-otp")
+    public ResponseEntity<?> verifyOtp(@RequestParam Long userId, @RequestParam String code) {
+        authService.verifyOtp(userId, code);
+        return ResponseEntity.ok("OTP verified successfully.");
+    }
 }
