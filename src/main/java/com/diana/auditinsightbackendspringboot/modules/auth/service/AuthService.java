@@ -65,7 +65,7 @@ public class AuthService {
         if (!valid) throw new RuntimeException("Invalid OTP");
         user.setPassword(passwordEncoder.encode(request.getNewPassword()));
         userRepository.save(user);
-
-
     }
+
+    // VERIFY OTP (for signup)
 }
