@@ -16,13 +16,13 @@ public class AuthService {
 
     public AuthService(UserRepository userRepository,PasswordEncoder PasswordEncoder,OtpService otpService) {
         this.userRepository = userRepository;
-        this.passwordEncoder = passwordEncoder;
+        this.passwordEncoder = PasswordEncoder;
         this.otpService = otpService;
     }
  // SIGNUP
     public User signup(SignupRequest request) {
         if(userRepository.findByEmail(request.getEmail()).isPresent()) {
-            throw new RuntimeException("Email already exist")
+            throw new RuntimeException("Email already exist");
         }
 
         User user = User.builder()
