@@ -61,7 +61,7 @@ public class AuthService {
     public void resetPassword(ResetPasswordRequest request){
         User user = userRepository.findByEmail(request.getEmail())
                 .orElseThrow(() -> new RuntimeException("User not found"));
-        boolean valid = otpService.verifyOtp(userId, code);
+        boolean valid = otpService.verifyOtp(user.getId(), request.getOtp());
 
     }
 }
