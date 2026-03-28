@@ -12,4 +12,9 @@ public class JwtUtil {
     private final String SECRET_KEY = "mySecretKey"; // keep this a secret
     private final long EXPIRATION_MS = 1000 * 60 * 60;  // 1 hour
 
+    // Generate token
+    public String generateToken(Long userId, String email){
+
+    }
+
 }
