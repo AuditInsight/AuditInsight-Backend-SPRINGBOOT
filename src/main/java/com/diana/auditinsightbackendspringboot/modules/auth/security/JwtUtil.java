@@ -8,4 +8,6 @@ import java.util.Date;
 
 @Component
 public class JwtUtil {
+
+    private final String SECRET_KEY = "mySecretKey"; // keep this a secret
 }
