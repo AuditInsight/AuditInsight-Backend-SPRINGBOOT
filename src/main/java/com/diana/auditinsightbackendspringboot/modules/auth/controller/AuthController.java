@@ -7,6 +7,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import jakarta.validation.Valid;
 
+import java.util.Map;
+
 @RestController
 @RequestMapping("/api/auth")
 public class AuthController {
@@ -22,10 +24,11 @@ public class AuthController {
         return ResponseEntity.ok("User registered. Check OTP to verify.");
     }
 
+
     @PostMapping("/login")
     public ResponseEntity<?> login(@Valid @RequestBody LoginRequest request) {
-        authService.login(request);
-        return ResponseEntity.ok("Login successful.");
+        String token = authService.login(request);
+        return ResponseEntity.ok(Map.of("token", token));
     }
     @PostMapping("/forgot-password")
     public ResponseEntity<?> forgotPassword(@Valid @RequestBody ForgotPasswordRequest request) {
