@@ -17,7 +17,8 @@ public class JwtUtil {
         return Jwts.builder()
                 .setSubject(String.valueOf(userId))
                 .claim("email", email)
-                .s
+                .setIssuedAt(new Date(System.currentTimeMillis() + EXPIRATION_MS))
+
 
     }
 
