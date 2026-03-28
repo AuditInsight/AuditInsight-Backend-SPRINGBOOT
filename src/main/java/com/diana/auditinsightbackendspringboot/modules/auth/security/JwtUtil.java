@@ -15,6 +15,9 @@ public class JwtUtil {
     // Generate token
     public String generateToken(Long userId, String email){
         return Jwts.builder()
+                .setSubject(String.valueOf(userId))
+                .claim("email", email)
+                .s
 
     }
 
