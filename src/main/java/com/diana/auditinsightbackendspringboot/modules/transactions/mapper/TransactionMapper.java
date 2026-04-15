@@ -1,18 +1,22 @@
 package com.diana.auditinsightbackendspringboot.modules.transactions.mapper;
 
+import com.diana.auditinsightbackendspringboot.modules.transactions.dto.TransactionRequest;
+import com.diana.auditinsightbackendspringboot.modules.transactions.dto.TransactionResponse;
+import com.diana.auditinsightbackendspringboot.modules.transactions.entity.Transaction;
+
 public class TransactionMapper {
 
-    // DTO → ENTITY
+    // DTO → ENTITY (🔥 CLEAN BUILDER VERSION)
     public static Transaction toEntity(TransactionRequest dto) {
-        Transaction t = new Transaction();
-        t.setDate(dto.getDate());
-        t.setAmount(dto.getAmount());
-        t.setCounterparty(dto.getCounterparty());
-        t.setType(dto.getType());
-        t.setSource(dto.getSource());
-        t.setStatus(dto.getStatus());
-        t.setRiskScore(dto.getRiskScore());
-        return t;
+        return Transaction.builder()
+                .date(dto.getDate())
+                .amount(dto.getAmount())
+                .counterparty(dto.getCounterparty())
+                .type(dto.getType())
+                .source(dto.getSource())
+                .status(dto.getStatus())
+                .riskScore(dto.getRiskScore())
+                .build();
     }
 
     // ENTITY → DTO
@@ -28,5 +32,4 @@ public class TransactionMapper {
         dto.setRiskScore(t.getRiskScore());
         return dto;
     }
-
 }
