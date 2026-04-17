@@ -22,7 +22,7 @@ public class AuthService {
         this.jwtUtil = jwtUtil;
     }
  // SIGNUP
- public User signup(SignupRequest request) {
+ public String signup(SignupRequest request) {
 
      if (userRepository.findByEmail(request.getEmail()).isPresent()) {
          throw new RuntimeException("Email already exists");
@@ -43,7 +43,7 @@ public class AuthService {
 
      otpService.generateOTP(savedUser.getId()); // generate OTP after signup
 
-     return savedUser;
+     return "User registered successfully. Please verify your OTP.";
  }
 
     // LOGIN
