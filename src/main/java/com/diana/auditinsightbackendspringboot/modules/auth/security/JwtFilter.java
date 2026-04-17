@@ -34,6 +34,7 @@ public class JwtFilter implements Filter {
         if (path.startsWith("/api/auth") ||
                 path.startsWith("/swagger-ui") ||
                 path.startsWith("/v3/api-docs") ||
+                path.startsWith("/api/transactions") ||
                 path.startsWith("/webjars")) {
 
             chain.doFilter(request, response);
