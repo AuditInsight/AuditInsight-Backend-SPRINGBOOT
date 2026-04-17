@@ -1,6 +1,7 @@
 package com.diana.auditinsightbackendspringboot.config;
 
 import com.diana.auditinsightbackendspringboot.modules.auth.security.JwtFilter;
+import com.diana.auditinsightbackendspringboot.modules.auth.security.OAuth2SuccessHandler;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -9,16 +10,17 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
 @Configuration
 @EnableWebSecurity
 public class SecurityConfig {
 
     private final JwtFilter jwtFilter;
+    private final OAuth2SuccessHandler oAuth2SuccessHandler;
 
-    public SecurityConfig(JwtFilter jwtFilter) {
+    public SecurityConfig(JwtFilter jwtFilter, OAuth2SuccessHandler oAuth2SuccessHandler) {
         this.jwtFilter = jwtFilter;
+        this.oAuth2SuccessHandler = oAuth2SuccessHandler;
     }
 
     @Bean
@@ -45,8 +47,9 @@ public class SecurityConfig {
                         .anyRequest().authenticated()
                 )
 
+                // ✅ GOOGLE LOGIN WITH JWT SUCCESS HANDLER
                 .oauth2Login(oauth -> oauth
-                        .defaultSuccessUrl("http://localhost:3000/dashboard", true)
+                        .successHandler(oAuth2SuccessHandler)
                 )
 
                 .sessionManagement(session ->
@@ -57,4 +60,5 @@ public class SecurityConfig {
         // http.addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
-    }}
+    }
+}
