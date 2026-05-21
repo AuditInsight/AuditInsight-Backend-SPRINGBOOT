@@ -24,7 +24,7 @@ public class User {
     @Column(nullable = false)
     private Boolean isVerified = false;  // to track OTP verification.
 
-    private String fullName;   // full name of the userS.
+    private String fullName;   // full name of the user.
 
 
 }
