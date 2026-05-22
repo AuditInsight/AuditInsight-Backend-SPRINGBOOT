@@ -1,8 +1,3 @@
-FROM ubuntu:latest
-LABEL authors="macbookpro"
-
-ENTRYPOINT ["toap", "-b"]
-
 # ---------- BUILD STAGE ----------
 FROM maven:3.9.6-eclipse-temurin-17 AS build
 

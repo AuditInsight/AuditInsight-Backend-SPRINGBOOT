@@ -17,6 +17,8 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
+    restart: always
+
   backend:
     build: .
     container_name: auditinsight-backend
