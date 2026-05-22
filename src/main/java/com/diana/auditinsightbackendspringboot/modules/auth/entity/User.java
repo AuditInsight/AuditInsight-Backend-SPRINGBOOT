@@ -22,7 +22,7 @@ public class User {
     private String password; // stores hashed passwords only.
 
     @Column(nullable = false)
-    private Boolean isVerified = false;  // too track OTP verification.
+    private Boolean isVerified = false;  // to track OTP verification.
 
     private String fullName;   // full name of the user.
 
