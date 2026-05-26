@@ -1,4 +1,4 @@
-package com.diana.auditinsightbackendspringboot.modules.auth.dto;
+package com.diana.auditinsightbackendspringboot.DTOs;
 
 import lombok.Data;
 import jakarta.validation.constraints.NotBlank;
