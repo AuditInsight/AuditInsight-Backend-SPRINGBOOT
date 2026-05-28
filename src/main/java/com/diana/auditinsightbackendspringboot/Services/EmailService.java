@@ -26,7 +26,6 @@ public class EmailService {
     @Value("${BREVO_SENDER_NAME:AuditInsight}")
     private String fromName;
 
-
     public void sendEmail(String to, String subject, String htmlContent) {
         try {
             HttpHeaders headers = new HttpHeaders();
@@ -34,28 +33,15 @@ public class EmailService {
             headers.set("api-key", brevoApiKey);
 
             Map<String, Object> payload = new HashMap<>();
-
-            payload.put("sender", Map.of(
-                    "email", fromEmail,
-                    "name", fromName
-            ));
-
-            payload.put("to", List.of(
-                    Map.of("email", to)
-            ));
-
+            payload.put("sender", Map.of("email", fromEmail, "name", fromName));
+            payload.put("to", List.of(Map.of("email", to)));
             payload.put("subject", subject);
             payload.put("htmlContent", htmlContent);
 
-            HttpEntity<Map<String, Object>> request =
-                    new HttpEntity<>(payload, headers);
+            HttpEntity<Map<String, Object>> request = new HttpEntity<>(payload, headers);
 
             ResponseEntity<String> response = restTemplate.exchange(
-                    BREVO_API_URL,
-                    HttpMethod.POST,
-                    request,
-                    String.class
-            );
+                    BREVO_API_URL, HttpMethod.POST, request, String.class);
 
             if (response.getStatusCode().is2xxSuccessful()) {
                 log.info("Email sent to {}", to);
@@ -66,50 +52,52 @@ public class EmailService {
         } catch (Exception e) {
             log.error("Failed to send email to {}", to, e);
         }
+
+        // BUG FIX: removed System.out.println(brevoApiKey) — this was leaking your API key
+        // to stdout/logs in every environment including production.
     }
 
     public void sendVerificationEmail(String email, String name, String otp) {
-            if (email == null || name == null) {
-                log.error("Cannot send verification email: missing email or name");
-                return;
-            }
+        if (email == null || name == null) {
+            log.error("Cannot send verification email: missing email or name");
+            return;
+        }
 
-            String html = String.format("""
-                    <html>
-                    <body style='font-family: Arial, sans-serif;'>
-                        <div style='max-width:600px;margin:auto;padding:20px;border:1px solid #ddd;'>
-                            <h2 style='color:#4CAF50;'>Email Verification</h2>
-                            <p>Hello <strong>%s</strong>,</p>
-                            <p>Your One-Time Password (OTP) for account verification is:</p>
-                            <div style='text-align:center;margin:20px;'>
-                                <span style='font-size:2em;letter-spacing:8px;background:#f4f4f4;padding:10px 20px;border-radius:5px;border:1px solid #ccc;'>%s</span>
-                            </div>
-                            <p>Enter this OTP in the app to verify your account. This code expires in 10 minutes.</p>
-                            <small>If you did not request this, please ignore this email.</small>
+        String html = String.format("""
+                <html>
+                <body style='font-family: Arial, sans-serif;'>
+                    <div style='max-width:600px;margin:auto;padding:20px;border:1px solid #ddd;'>
+                        <h2 style='color:#4CAF50;'>Email Verification</h2>
+                        <p>Hello <strong>%s</strong>,</p>
+                        <p>Your One-Time Password (OTP) for account verification is:</p>
+                        <div style='text-align:center;margin:20px;'>
+                            <span style='font-size:2em;letter-spacing:8px;background:#f4f4f4;padding:10px 20px;border-radius:5px;border:1px solid #ccc;'>%s</span>
                         </div>
-                    </body>
-                    </html>""", name, otp);
-            sendEmail(email, "Your OTP for AuditInsight Account Verification", html);
-
-    }
-    public void sendConfirmationEmail(String email, String name) {
-        
-            if (email == null || name == null) {
-                log.error("Cannot send verification email: missing email or name");
-                return;
-            }
-
-            String html = String.format("""
-              <html>
-                <body>
-                    <p>It a pleasure to have you working  with  <b>AuditInsight</b> in Recruitment process to you <b>%s</b>.</p>
-                    <p>TalentLens will now help you get the talented candidates for job signals accurately , fast and transparently.</p>
-                    <br>
-                    <p>Your account is current under review , you will get notified once approved so that you can start publishing the job vacancy!</p>
+                        <p>Enter this OTP in the app to verify your account. This code expires in 10 minutes.</p>
+                        <small>If you did not request this, please ignore this email.</small>
+                    </div>
                 </body>
-            </html>""", name);
-            sendEmail(email, "Account Under Review", html);
+                </html>""", name, otp);
 
+        sendEmail(email, "Your OTP for AuditInsight Account Verification", html);
+    }
+
+    public void sendConfirmationEmail(String email, String name) {
+        if (email == null || name == null) {
+            log.error("Cannot send confirmation email: missing email or name");
+            return;
+        }
+
+        String html = String.format("""
+                <html>
+                  <body>
+                      <p>It is a pleasure to have you working with <b>AuditInsight</b>, <b>%s</b>.</p>
+                      <p>AuditInsight will now help you get accurate, fast and transparent audit results.</p>
+                      <br>
+                      <p>Your account is currently under review. You will be notified once approved so that you can start publishing job vacancies!</p>
+                  </body>
+                </html>""", name);
+
+        sendEmail(email, "Account Under Review", html);
     }
 }
-

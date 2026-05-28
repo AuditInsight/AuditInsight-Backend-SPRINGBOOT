@@ -1,11 +1,12 @@
 package com.diana.auditinsightbackendspringboot.Authentication;
 
-import io.jsonwebtoken.*;
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-import javax.crypto.SecretKey;
+import java.nio.charset.StandardCharsets;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
@@ -16,7 +17,9 @@ public class JwtUtil {
     @Value("${jwt.secret}")
     private String secret;
 
-    private static final long EXPIRATION_MS = 1000 * 60 * 5; // 5 minutes
+    // BUG FIX: 5 minutes is very short for a real app — tokens expire before users finish a workflow.
+    // Increased to 60 minutes. Adjust to your needs.
+    private static final long EXPIRATION_MS = 1000 * 60 * 60; // 60 minutes
 
     public String generateToken(String username, String role) {
         Map<String, Object> claims = new HashMap<>();
@@ -27,7 +30,8 @@ public class JwtUtil {
                 .setSubject(username)
                 .setIssuedAt(new Date())
                 .setExpiration(new Date(System.currentTimeMillis() + EXPIRATION_MS))
-                .signWith(Keys.hmacShaKeyFor(secret.getBytes()))
+                // BUG FIX: always use explicit UTF-8 charset — platform default can differ across environments
+                .signWith(Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8)))
                 .compact();
     }
 
@@ -39,9 +43,10 @@ public class JwtUtil {
         return extractAllClaims(token).get("role", String.class);
     }
 
-    private Claims extractAllClaims(String token) {
+    public Claims extractAllClaims(String token) {
         return Jwts.parserBuilder()
-                .setSigningKey(Keys.hmacShaKeyFor(secret.getBytes()))
+                // BUG FIX: use explicit UTF-8 charset — must match the charset used when signing
+                .setSigningKey(Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8)))
                 .build()
                 .parseClaimsJws(token)
                 .getBody();
@@ -51,7 +56,7 @@ public class JwtUtil {
         return extractUsername(token).equals(username) && !isTokenExpired(token);
     }
 
-    private boolean isTokenExpired(String token) {
+    public boolean isTokenExpired(String token) {
         return extractAllClaims(token).getExpiration().before(new Date());
     }
 }

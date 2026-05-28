@@ -1,9 +1,6 @@
 package com.diana.auditinsightbackendspringboot.DTOs;
 
-
 import com.diana.auditinsightbackendspringboot.Enum.Role;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
 import jakarta.validation.constraints.*;
 import lombok.Getter;
 import lombok.Setter;
@@ -22,11 +19,10 @@ public class UserRegister {
     @NotBlank(message = "the email is missing")
     private String username;
 
-    @Pattern(message = "the  password should be valid ", regexp = "^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[@$!%*?&])[A-Za-z\\d@$!%*?&]{8,}$")
+    @Pattern(message = "the password should be valid", regexp = "^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[@$!%*?&])[A-Za-z\\d@$!%*?&]{8,}$")
     @NotBlank(message = "this field can not be empty")
     private String password;
 
-    @NotNull(message = "you must provide the role")
+    @NotNull(message = "you must provide the role(CLIENT / AUDITOR)")
     private Role role;
-
 }

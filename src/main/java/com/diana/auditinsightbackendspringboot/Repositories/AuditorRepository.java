@@ -1,11 +1,9 @@
 package com.diana.auditinsightbackendspringboot.Repositories;
 
 import com.diana.auditinsightbackendspringboot.Models.AuditorProfile;
-import jakarta.validation.constraints.Email;
-import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.repository.reactive.ReactiveCrudRepository;
+import reactor.core.publisher.Mono;
 
-import java.util.Optional;
-
-public interface AuditorRepository extends JpaRepository<AuditorProfile, Long> {
-    Optional<AuditorProfile> findByEmailAddress(@Email(message = "the email must be valid", regexp = "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$ ") String username);
+public interface AuditorRepository extends ReactiveCrudRepository<AuditorProfile, Long> {
+    Mono<AuditorProfile> findByEmailAddress(String emailAddress);
 }

@@ -1,107 +1,110 @@
 package com.diana.auditinsightbackendspringboot.Authentication;
 
 import com.diana.auditinsightbackendspringboot.Services.CustomOAuth2UserService;
-import org.jspecify.annotations.NullMarked;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.server.reactive.ServerHttpResponse;
 import org.springframework.security.config.Customizer;
-import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
-import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
-import org.springframework.security.config.annotation.web.builders.HttpSecurity;
-import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
-import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
-import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.config.annotation.method.configuration.EnableReactiveMethodSecurity;
+import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity;
+import org.springframework.security.config.web.server.SecurityWebFiltersOrder;
+import org.springframework.security.config.web.server.ServerHttpSecurity;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.security.oauth2.core.user.OAuth2User;
-import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
-import org.springframework.web.servlet.config.annotation.CorsRegistry;
-import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
+import org.springframework.security.oauth2.client.oidc.userinfo.OidcReactiveOAuth2UserService;
+import org.springframework.security.oauth2.client.oidc.userinfo.OidcUserRequest;
+import org.springframework.security.oauth2.client.userinfo.ReactiveOAuth2UserService;
+import org.springframework.security.oauth2.core.oidc.user.OidcUser;
+import org.springframework.security.web.server.SecurityWebFilterChain;
+import org.springframework.security.web.server.authentication.ServerAuthenticationSuccessHandler;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.reactive.CorsConfigurationSource;
+import org.springframework.web.cors.reactive.UrlBasedCorsConfigurationSource;
+
+import java.net.URI;
+import java.util.List;
 
 @Configuration
-@EnableWebSecurity
-@EnableMethodSecurity
+@EnableWebFluxSecurity
+@EnableReactiveMethodSecurity
 public class SecurityConfig {
 
     private final JwtFilter jwtFilter;
     private final CustomOAuth2UserService customOAuth2UserService;
-    private final JwtUtil jwtUtil;
 
-
-    public SecurityConfig(JwtFilter jwtFilter , CustomOAuth2UserService customOAuth2UserService , JwtUtil jwtUtil) {
-
+    public SecurityConfig(JwtFilter jwtFilter, CustomOAuth2UserService customOAuth2UserService) {
         this.jwtFilter = jwtFilter;
         this.customOAuth2UserService = customOAuth2UserService;
-        this.jwtUtil = jwtUtil;
-
     }
 
     @Bean
-    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+    public SecurityWebFilterChain securityWebFilterChain(ServerHttpSecurity http) {
         return http
-                .cors(Customizer.withDefaults())
-                .csrf(AbstractHttpConfigurer::disable)
-                .sessionManagement(sess -> sess.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-
-                .authorizeHttpRequests(auth -> auth
-
-                        .requestMatchers(
-                                "/v3/api-docs/**",
+                .csrf(ServerHttpSecurity.CsrfSpec::disable)
+                .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+                .authorizeExchange(auth -> auth
+                        .pathMatchers(
+                                "/api/auth/**",
+                                "/oauth2/**",
+                                "/login/oauth2/**",
                                 "/swagger-ui/**",
                                 "/swagger-ui.html",
-                                "/api/auth/**",
-                                "/oauth2/**"
+                                "/v3/api-docs/**",
+                                "/webjars/**"
                         ).permitAll()
-                        .anyRequest().authenticated()
+                        .anyExchange().authenticated()
                 )
-
                 .oauth2Login(oauth2 -> oauth2
-                        .userInfoEndpoint(userInfo -> userInfo
-                                .userService(customOAuth2UserService))
-                        .successHandler((request, response, authentication) -> {
-                            OAuth2User oAuth2User = (OAuth2User) authentication.getPrincipal();
-                            assert oAuth2User != null;
-                            String email = oAuth2User.getAttribute("email");
-
-
-                            String token = jwtUtil.generateToken(email, "CLIENT");
-
-
-                            response.sendRedirect("/swagger-ui/index.html?token=" + token);
-                        })
-
+                        .authenticationSuccessHandler(oAuth2SuccessHandler())
                 )
-
-                .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
+                .addFilterAt(jwtFilter, SecurityWebFiltersOrder.AUTHENTICATION)
                 .build();
     }
 
-
     @Bean
     public PasswordEncoder passwordEncoder() {
-
         return new BCryptPasswordEncoder();
     }
 
     @Bean
-    public AuthenticationManager authManager(AuthenticationConfiguration config) throws Exception {
-        return config.getAuthenticationManager();
+    public CorsConfigurationSource corsConfigurationSource() {
+        CorsConfiguration config = new CorsConfiguration();
+        config.setAllowedOriginPatterns(List.of("*"));
+        config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
+        config.setAllowedHeaders(List.of("*"));
+        config.setAllowCredentials(true);
+
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", config);
+        return source;
+    }
+    @Bean
+    public ReactiveOAuth2UserService<OidcUserRequest, OidcUser> oidcUserService(
+            CustomOAuth2UserService customOAuth2UserService) {
+        OidcReactiveOAuth2UserService oidcService = new OidcReactiveOAuth2UserService();
+        oidcService.setOauth2UserService(customOAuth2UserService);
+        return oidcService;
     }
 
     @Bean
-    public WebMvcConfigurer corsConfigurer() {
-        return new WebMvcConfigurer() {
-            @Override
-            @NullMarked
-            public void addCorsMappings(CorsRegistry registry) {
-                registry.addMapping("/**") // Allow all endpoints
-                        .allowedOriginPatterns("*") // Allow all frontends (you can lock this down later)
-                        .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
-                        .allowedHeaders("*")
-                        .allowCredentials(true);
-            }
+    public ServerAuthenticationSuccessHandler oAuth2SuccessHandler(JwtUtil jwtUtil) {
+        return (webFilterExchange, authentication) -> {
+            OidcUser oidcUser = (OidcUser) authentication.getPrincipal();
+            assert oidcUser != null;
+            String email = oidcUser.getEmail();
+
+            // Generate your JWT here using your existing JwtService
+            String token = jwtUtil.generateToken(email , );
+
+            ServerHttpResponse response = webFilterExchange.getExchange().getResponse();
+            response.setStatusCode(HttpStatus.FOUND);
+            response.getHeaders().setLocation(
+                    URI.create("http://localhost:3000/oauth2/callback?token=" + token)
+            );
+            return response.setComplete();
         };
     }
+
+
 }

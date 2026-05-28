@@ -4,17 +4,13 @@ import com.diana.auditinsightbackendspringboot.Authentication.JwtUtil;
 import com.diana.auditinsightbackendspringboot.DTOs.*;
 import com.diana.auditinsightbackendspringboot.Enum.Role;
 import com.diana.auditinsightbackendspringboot.Exceptions.Custom.InvalidRecord;
-import com.diana.auditinsightbackendspringboot.Models.AuditorProfile;
-import com.diana.auditinsightbackendspringboot.Models.ClientProfile;
-import com.diana.auditinsightbackendspringboot.Models.OtpVerification;
-import com.diana.auditinsightbackendspringboot.Models.User;
-import com.diana.auditinsightbackendspringboot.Repositories.AuditorRepository;
-import com.diana.auditinsightbackendspringboot.Repositories.ClientRepository;
-import com.diana.auditinsightbackendspringboot.Repositories.OtpRepository;
-import com.diana.auditinsightbackendspringboot.Repositories.UserRepository;
+import com.diana.auditinsightbackendspringboot.Models.*;
+import com.diana.auditinsightbackendspringboot.Repositories.*;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 import java.time.LocalDateTime;
 import java.util.Random;
@@ -30,122 +26,174 @@ public class AuthService {
     private final EmailService emailService;
     private final OtpRepository otpVerificationRepository;
 
-    public AuthService(UserRepository repo, PasswordEncoder encoder, JwtUtil jwtUtil ,
-                       ClientRepository clientRepository , AuditorRepository auditorRepository ,
-                       EmailService emailService, OtpRepository otpVerification) {
+    public AuthService(UserRepository repo, PasswordEncoder encoder, JwtUtil jwtUtil,
+                       ClientRepository clientRepository, AuditorRepository auditorRepository,
+                       EmailService emailService, OtpRepository otpVerificationRepository) {
         this.repo = repo;
         this.encoder = encoder;
         this.jwtUtil = jwtUtil;
         this.clientRepository = clientRepository;
         this.auditorRepository = auditorRepository;
         this.emailService = emailService;
-        this.otpVerificationRepository = otpVerification;
-
+        this.otpVerificationRepository = otpVerificationRepository;
     }
 
-    public ResponseMessage registerUser(UserRegister userRegister) {
-        if (repo.existsByUsername(userRegister.getUsername())){
-            return new ResponseMessage(HttpStatus.CONFLICT , "Email already registered");
+    public Mono<ResponseMessage> registerUser(UserRegister request) {
+        return repo.existsByUsername(request.getUsername())
+                .flatMap(exists -> {
+                    if (exists) {
+                        return Mono.just(new ResponseMessage(HttpStatus.CONFLICT, "Email already registered"));
+                    }
 
-        }
-        User user = new User();
-        user.setFullName(userRegister.getFirstName().trim() + " " + userRegister.getLastName().trim());
-        user.setUsername(userRegister.getUsername());
-        user.setPassword(encoder.encode(userRegister.getPassword()));
-        user.setRole(userRegister.getRole());
-        user.setAuthProvider("JWT");
-        repo.save(user);
+                    User user = new User();
+                    user.setFullName(request.getFirstName().trim() + " " + request.getLastName().trim());
+                    user.setUsername(request.getUsername());
+                    user.setPassword(encoder.encode(request.getPassword()));
+                    user.setRole(request.getRole());
+                    user.setAuthProvider("JWT");
 
-        if (userRegister.getRole() == Role.CLIENT) {
-            ClientProfile profile = new ClientProfile();
-            profile.setFirstName(userRegister.getFirstName().trim());
-            profile.setLastName(userRegister.getLastName().trim());
-            profile.setEmailAddress(userRegister.getUsername());
-            clientRepository.save(profile);
+                    return repo.save(user).flatMap(savedUser -> {
 
-            String OTP = generateOtp(userRegister.getUsername());
+                        if (savedUser.getRole() == Role.CLIENT) {
+                            ClientProfile profile = new ClientProfile();
+                            profile.setFirstName(request.getFirstName().trim());
+                            profile.setLastName(request.getLastName().trim());
+                            profile.setEmailAddress(request.getUsername());
 
+                            return clientRepository.save(profile)
+                                    .then(generateOtp(savedUser.getUsername()))
+                                    .flatMap(otp ->
+                                            Mono.fromRunnable(() -> emailService.sendVerificationEmail(
+                                                            profile.getEmailAddress(), profile.getFirstName(), otp))
+                                                    .subscribeOn(Schedulers.boundedElastic())
+                                                    .thenReturn(new ResponseMessage(HttpStatus.CREATED,
+                                                            "Successfully created an account. An OTP has been sent to your registered email."))
+                                    );
+                        } else if (savedUser.getRole() == Role.AUDITOR) {
+                            AuditorProfile auditorProfile = new AuditorProfile();
+                            auditorProfile.setFirstName(request.getFirstName());
+                            auditorProfile.setLastName(request.getLastName());
+                            auditorProfile.setEmailAddress(request.getUsername());
 
-
-            emailService.sendVerificationEmail(profile.getEmailAddress() , profile.getFirstName(), OTP);
-
-            return new ResponseMessage(HttpStatus.CREATED , "Successfully created an account. An OTP has been sent to your registered email address for account verification.");
-
-        } else if (userRegister.getRole() == Role.AUDITOR) {
-            AuditorProfile auditorProfile = new AuditorProfile();
-            auditorProfile.setFirstName(userRegister.getFirstName());
-            auditorProfile.setLastName(userRegister.getLastName());
-            auditorProfile.setEmailAddress(userRegister.getUsername());
-            auditorRepository.save(auditorProfile);
-
-
-            emailService.sendConfirmationEmail(auditorProfile.getEmailAddress(), auditorProfile.getFirstName());
-
-            return new ResponseMessage(HttpStatus.CREATED ,"Successfully created an account. Check your email address for confirmation");
-
-        }
-        else {
-            return new ResponseMessage(HttpStatus.BAD_REQUEST , "Provided role is not supported");
-        }
-
-
+                            return auditorRepository.save(auditorProfile)
+                                    .flatMap(savedProfile ->
+                                            Mono.fromRunnable(() -> emailService.sendConfirmationEmail(
+                                                            savedProfile.getEmailAddress(), savedProfile.getFirstName()))
+                                                    .subscribeOn(Schedulers.boundedElastic())
+                                                    .thenReturn(new ResponseMessage(HttpStatus.CREATED,
+                                                            "Successfully created an account. Check your email address for confirmation."))
+                                    );
+                        }
+                        return Mono.just(new ResponseMessage(HttpStatus.BAD_REQUEST, "Provided role is not supported"));
+                    });
+                });
     }
 
+    public Mono<LoginMessage> login(LoginRequest request) {
+        return repo.findByUsername(request.getUsername())
+                .switchIfEmpty(Mono.error(new InvalidRecord("Username not found")))
+                .flatMap(user -> {
+                    if (!encoder.matches(request.getPassword(), user.getPassword())) {
+                        return Mono.error(new InvalidRecord("Invalid credentials"));
+                    }
 
+                    if (user.getRole() == Role.CLIENT) {
+                        return otpVerificationRepository.findByEmail(user.getUsername())
+                                .switchIfEmpty(Mono.error(new InvalidRecord(
+                                        "Your account is not active. Please verify your email using the OTP.")))
+                                .flatMap(otp -> {
+                                    if (!otp.isVerified()) {
+                                        // BUG FIX: tell the user whether OTP has expired so they know to request a new one
+                                        if (otp.getExpiry().isBefore(LocalDateTime.now())) {
+                                            return Mono.error(new InvalidRecord(
+                                                    "Your OTP has expired. Please request a new one."));
+                                        }
+                                        return Mono.error(new InvalidRecord(
+                                                "Your account is not active. Please verify your email using the OTP."));
+                                    }
+                                    return generateTokenResponse(user);
+                                });
+                    } else if (user.getRole() == Role.AUDITOR) {
+                        if (!user.isVerified()) {
+                            return Mono.error(new InvalidRecord("Your account is waiting for admin approval."));
+                        }
+                        return generateTokenResponse(user);
+                    }
 
-    public LoginMessage login(LoginRequest request) throws InvalidRecord {
-
-        User user = repo.findByUsername(request.getUsername())
-                .orElseThrow(() -> new InvalidRecord("Username not found"));
-
-        if (!encoder.matches(request.getPassword(), user.getPassword()))
-            throw new InvalidRecord("Invalid credentials");
-
-
-        if (user.getRole().equals(Role.CLIENT)) {
-            OtpVerification otp = otpVerificationRepository.findByEmail(user.getUsername());
-
-            if (otp == null || !otp.isVerified()) {
-                throw new InvalidRecord("Your account is not active. Please verify your email using the OTP.");
-            }
-            user.setVerified(true);
-
-        }
-        else if (user.getRole().equals(Role.AUDITOR)) {
-
-            AuditorProfile auditor = auditorRepository.findByEmailAddress(user.getUsername())
-                    .orElseThrow(() -> new InvalidRecord("Auditor profile not found."));
-
-            if (!user.isVerified()) {
-                throw new InvalidRecord("Your account is waiting for  admin approval.");
-            }
-        }
-
-        return new LoginMessage(HttpStatus.OK ,"Successfully Login" , jwtUtil.generateToken(user.getUsername(), user.getRole().name()), user.getRole());
+                    return Mono.error(new InvalidRecord("Unknown user role"));
+                });
     }
 
-
-    private  String generateOtp(String email) {
-        Random random = new Random();
-        int otp = 100000 + random.nextInt(900000);
-        OtpVerification otpVerification = new OtpVerification();
-        otpVerification.setEmail(email);
-        otpVerification.setOtp(String.valueOf(otp));
-        otpVerification.setVerified(false);
-        otpVerification.setExpiry(LocalDateTime.now().plusMinutes(10));
-        otpVerificationRepository.save(otpVerification);
-        return String.valueOf(otp);
+    private Mono<LoginMessage> generateTokenResponse(User user) {
+        String token = jwtUtil.generateToken(user.getUsername(), user.getRole().name());
+        return Mono.just(new LoginMessage(HttpStatus.OK, "Successfully Login", token, user.getRole()));
     }
-    public ResponseMessage verifyOtp(OtpRequest request) {
-        OtpVerification otp = otpVerificationRepository.findByEmailAndOtp(request.getEmail(), request.getOtp()).orElseThrow(() -> new IllegalStateException("Invalid OTP or email."));
-        if (otp.isVerified()) {
-            throw new IllegalStateException("Email already verified.");
-        }
-        if (otp.getExpiry().isBefore(LocalDateTime.now())) {
-            throw new IllegalStateException("OTP expired. Please request a new one.");
-        }
-        otp.setVerified(true);
-        otpVerificationRepository.save(otp);
-        return new ResponseMessage(HttpStatus.OK,"Successfully verified. Account Activated");
+
+    // BUG FIX: delete any existing OTP for this email before saving a new one.
+    // Without this, a user requesting a new OTP ends up with multiple OTP rows, and
+    // findByEmail returns an unpredictable one — making resend/re-verify unreliable.
+    private Mono<String> generateOtp(String email) {
+        int otpCode = 100000 + new Random().nextInt(900000);
+        OtpVerification otp = new OtpVerification();
+        otp.setEmail(email);
+        otp.setOtp(String.valueOf(otpCode));
+        otp.setVerified(false);
+        otp.setExpiry(LocalDateTime.now().plusMinutes(10));
+
+        return otpVerificationRepository.deleteByEmail(email)
+                .then(otpVerificationRepository.save(otp))
+                .map(OtpVerification::getOtp);
+    }
+
+    public Mono<ResponseMessage> verifyOtp(OtpRequest request) {
+        return otpVerificationRepository.findByEmailAndOtp(request.getEmail(), request.getOtp())
+                .switchIfEmpty(Mono.error(new InvalidRecord("Invalid OTP or email.")))
+                .flatMap(otp -> {
+                    if (otp.isVerified()) {
+                        return Mono.error(new InvalidRecord("Email already verified."));
+                    }
+                    if (otp.getExpiry().isBefore(LocalDateTime.now())) {
+                        return Mono.error(new InvalidRecord("OTP expired. Please request a new one."));
+                    }
+
+                    otp.setVerified(true);
+                    return otpVerificationRepository.save(otp)
+                            .thenReturn(new ResponseMessage(HttpStatus.OK, "Successfully verified. Account Activated"));
+                });
+    }
+
+    // BUG FIX: expose a resend OTP endpoint method so users who let their OTP expire aren't locked out
+    public Mono<ResponseMessage> resendOtp(String email) {
+        return repo.findByUsername(email)
+                .switchIfEmpty(Mono.error(new InvalidRecord("No account found for this email.")))
+                .flatMap(user -> {
+                    if (user.getRole() != Role.CLIENT) {
+                        return Mono.error(new InvalidRecord("OTP verification is only required for client accounts."));
+                    }
+                    return otpVerificationRepository.findByEmail(email)
+                            .flatMap(otp -> {
+                                if (otp.isVerified()) {
+                                    return Mono.just(new ResponseMessage(HttpStatus.OK, "Your account is already verified."));
+                                }
+                                return generateOtp(email)
+                                        .flatMap(newOtp ->
+                                                Mono.fromRunnable(() -> emailService.sendVerificationEmail(
+                                                                email, user.getFullName(), newOtp))
+                                                        .subscribeOn(Schedulers.boundedElastic())
+                                                        .thenReturn(new ResponseMessage(HttpStatus.OK,
+                                                                "A new OTP has been sent to your email."))
+                                        );
+                            })
+                            .switchIfEmpty(
+                                    generateOtp(email)
+                                            .flatMap(newOtp ->
+                                                    Mono.fromRunnable(() -> emailService.sendVerificationEmail(
+                                                                    email, user.getFullName(), newOtp))
+                                                            .subscribeOn(Schedulers.boundedElastic())
+                                                            .thenReturn(new ResponseMessage(HttpStatus.OK,
+                                                                    "A new OTP has been sent to your email."))
+                                            )
+                            );
+                });
     }
 }

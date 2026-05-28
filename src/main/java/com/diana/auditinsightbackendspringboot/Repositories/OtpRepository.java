@@ -1,13 +1,15 @@
 package com.diana.auditinsightbackendspringboot.Repositories;
 
 import com.diana.auditinsightbackendspringboot.Models.OtpVerification;
-import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.repository.reactive.ReactiveCrudRepository;
+import reactor.core.publisher.Mono;
 
-import java.util.Optional;
+public interface OtpRepository extends ReactiveCrudRepository<OtpVerification, Long> {
 
-public interface OtpRepository extends JpaRepository<OtpVerification, Long> {
+    Mono<OtpVerification> findByEmail(String email);
 
-    Optional<OtpVerification> findByEmailAndOtp(String email, String otp);
+    Mono<OtpVerification> findByEmailAndOtp(String email, String otp);
 
-    OtpVerification findByEmail(String username);
+    // BUG FIX: needed to clear old OTPs before issuing a new one
+    Mono<Void> deleteByEmail(String email);
 }
