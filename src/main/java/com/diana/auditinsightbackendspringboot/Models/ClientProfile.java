@@ -29,6 +29,4 @@ public class ClientProfile {
 
     private String address;
 
-    @Column("company_name")
-    private String companyName;
 }

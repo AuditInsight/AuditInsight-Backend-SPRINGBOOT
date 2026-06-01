@@ -12,6 +12,10 @@ import org.springframework.stereotype.Component;
 @Component
 @Profile("!test")
 public class SuperAdminSeeder implements CommandLineRunner {
+    @Value("${ADMIN_USERNAME}")
+    private String adminUsername;
+    @Value("${ADMIN_PASSWORD}")
+    private String adminPassword;
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
@@ -24,12 +28,12 @@ public class SuperAdminSeeder implements CommandLineRunner {
 
     @Override
     public void run(String... args) {
-        Boolean exists = userRepository.existsByUsername("admin@auditinsight.com").block();
+        Boolean exists = userRepository.existsByUsername(adminUsername).block();
         if (Boolean.FALSE.equals(exists)) {
             User admin = new User();
             admin.setFullName("Super Admin");
             admin.setUsername("admin@auditinsight.com");
-            admin.setPassword(passwordEncoder.encode("Admin@123456"));
+            admin.setPassword(passwordEncoder.encode(adminPassword));
             admin.setRole(Role.ADMIN);
             admin.setAuthProvider("JWT");
             admin.setVerified(true);

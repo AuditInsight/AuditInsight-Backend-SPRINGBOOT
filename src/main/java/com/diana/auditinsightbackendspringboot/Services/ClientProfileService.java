@@ -29,7 +29,6 @@ public class ClientProfileService {
                     if (request.getLastName() != null) profile.setLastName(request.getLastName());
                     profile.setPhone(request.getPhone());
                     profile.setAddress(request.getAddress());
-                    profile.setCompanyName(request.getCompanyName());
                     return clientRepository.save(profile);
                 });
     }

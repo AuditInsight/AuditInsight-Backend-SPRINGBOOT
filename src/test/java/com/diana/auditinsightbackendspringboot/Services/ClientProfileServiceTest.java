@@ -77,7 +77,6 @@ class ClientProfileServiceTest {
         ClientProfile existing = profile("alice@test.com");
         existing.setFirstName("Alice");
         existing.setPhone("+999");
-        existing.setCompanyName("Acme");
         when(clientRepository.findByEmailAddress("alice@test.com")).thenReturn(Mono.just(existing));
         when(clientRepository.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
 
@@ -89,7 +88,6 @@ class ClientProfileServiceTest {
         StepVerifier.create(service.updateProfile("alice@test.com", req))
                 .expectNextMatches(p -> "Alice".equals(p.getFirstName())
                         && p.getPhone() == null
-                        && p.getCompanyName() == null
                         && "123 Main St".equals(p.getAddress()))
                 .verifyComplete();
     }
