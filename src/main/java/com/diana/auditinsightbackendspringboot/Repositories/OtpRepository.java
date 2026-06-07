@@ -10,6 +10,5 @@ public interface OtpRepository extends ReactiveCrudRepository<OtpVerification, L
 
     Mono<OtpVerification> findByEmailAndOtp(String email, String otp);
 
-    // BUG FIX: needed to clear old OTPs before issuing a new one
     Mono<Void> deleteByEmail(String email);
 }

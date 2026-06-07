@@ -66,14 +66,7 @@ public class SecurityConfig {
                 .build();
     }
 
-    /**
-     * Spring Security's oauth2Login() auto-detects CustomOAuth2UserService (which is a
-     * @Service bean typed as ReactiveOAuth2UserService<OAuth2UserRequest, OAuth2User>) and
-     * calls it directly — the principal arrives as DefaultOAuth2User, not DefaultOidcUser.
-     * Casting to OAuth2User (the shared interface) works for all principals (DefaultOAuth2User
-     * and DefaultOidcUser both implement it), and getAttribute("email") is always populated
-     * by Google regardless of whether the OIDC or plain OAuth2 path was taken.
-     */
+
     private ServerAuthenticationSuccessHandler oAuth2SuccessHandler() {
         return (webFilterExchange, authentication) -> {
             OAuth2User oAuth2User = (OAuth2User) authentication.getPrincipal();

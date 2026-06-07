@@ -52,14 +52,14 @@ public class OrganisationService {
         this.encoder = encoder;
     }
 
-    // ── helpers ───────────────────────────────────────────────────────────────
+
 
     private Mono<User> getUser(String email) {
         return userRepo.findByUsername(email)
                 .switchIfEmpty(Mono.error(new InvalidRecord("User not found")));
     }
 
-    /** Only ACTIVE members with the CLIENT role can perform owner actions. */
+
     private Mono<OrganisationMember> assertIsOwner(UUID orgId, Long userId) {
         return memberRepo.findByOrganisationIdAndUserId(orgId, userId)
                 .switchIfEmpty(Mono.error(new InvalidRecord("You are not a member of this organisation")))
@@ -130,7 +130,6 @@ public class OrganisationService {
         return sb.toString();
     }
 
-    // ── create organisation ───────────────────────────────────────────────────
 
     public Mono<OrganisationResponse> createOrganisation(
             String email,
@@ -186,7 +185,6 @@ public class OrganisationService {
                 );
     }
 
-    // ── list organisations the authenticated user belongs to ──────────────────
 
     public Flux<Organisation> listMyOrganisations(String email) {
         return getUser(email)
@@ -194,7 +192,6 @@ public class OrganisationService {
                 .flatMap(member -> orgRepo.findById(member.getOrganisationId()));
     }
 
-    // ── get organisation ──────────────────────────────────────────────────────
 
     public Mono<OrganisationResponse> getOrganisation(UUID orgId, String email) {
         return getUser(email)
@@ -204,7 +201,6 @@ public class OrganisationService {
                 .flatMap(org -> buildResponse(null, org));
     }
 
-    // ── update organisation ───────────────────────────────────────────────────
 
     public Mono<OrganisationResponse> updateOrganisation(
             UUID orgId,
@@ -245,7 +241,6 @@ public class OrganisationService {
                 });
     }
 
-    // ── invite member ─────────────────────────────────────────────────────────
 
     public Mono<ResponseMessage> inviteMember(
             UUID orgId,
@@ -364,7 +359,6 @@ public class OrganisationService {
         return inv;
     }
 
-    // ── list members ──────────────────────────────────────────────────────────
 
     public Flux<OrganisationMemberResponse> listMembers(UUID orgId, String email) {
         return getUser(email)
@@ -379,7 +373,6 @@ public class OrganisationService {
                                 member.getJoinedAt())));
     }
 
-    // ── remove member ─────────────────────────────────────────────────────────
 
     public Mono<ResponseMessage> removeMember(UUID orgId, String requesterEmail, Long userId) {
         return getUser(requesterEmail)
@@ -395,7 +388,6 @@ public class OrganisationService {
                 });
     }
 
-    // ── transfer ownership ────────────────────────────────────────────────────
 
     public Mono<ResponseMessage> transferOwnership(UUID orgId, String requesterEmail, String newOwnerEmail) {
         return getUser(requesterEmail).flatMap(requester ->
@@ -446,7 +438,6 @@ public class OrganisationService {
         );
     }
 
-    // ── list pending invitations ──────────────────────────────────────────────
 
     public Flux<OrganisationInvitationResponse> listPendingInvitations(UUID orgId, String email) {
         return getUser(email)
@@ -460,7 +451,6 @@ public class OrganisationService {
                         inv.getCreatedAt()));
     }
 
-    // ── revoke invitation ─────────────────────────────────────────────────────
 
     public Mono<ResponseMessage> revokeInvitation(UUID orgId, String email, UUID invitationId) {
         return getUser(email)

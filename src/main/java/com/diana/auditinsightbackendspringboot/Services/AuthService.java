@@ -115,15 +115,6 @@ public class AuthService {
                 .flatMap(this::generateTokenResponse);
     }
 
-    /**
-     * Validates the invitation token at login time.
-     *
-     * Rules:
-     * - If mustChangePassword=true (first login): token is REQUIRED.
-     * - If token is provided (any login): validate it and activate the specific org membership.
-     * - Expired token → access denied, invitation marked EXPIRED.
-     * - On successful activation: org_member status PENDING → ACTIVE; password-change email sent.
-     */
     private Mono<User> processInviteToken(User user, String inviteToken) {
         boolean hasToken = inviteToken != null && !inviteToken.isBlank();
 
@@ -243,7 +234,7 @@ public class AuthService {
                 user.getRole(), user.isMustChangePassword()));
     }
 
-    // BUG FIX: delete any existing OTP for this email before saving a new one.
+
     private Mono<String> generateOtp(String email) {
         int otpCode = 100000 + new Random().nextInt(900000);
         OtpVerification otp = new OtpVerification();
@@ -280,7 +271,7 @@ public class AuthService {
                 });
     }
 
-    // BUG FIX: expose a resend OTP endpoint so users who let their OTP expire aren't locked out
+
     public Mono<ResponseMessage> resendOtp(String email) {
         return repo.findByUsername(email)
                 .switchIfEmpty(Mono.error(new InvalidRecord("No account found for this email.")))

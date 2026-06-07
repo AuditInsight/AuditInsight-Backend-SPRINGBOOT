@@ -53,8 +53,7 @@ public class EmailService {
             log.error("Failed to send email to {}", to, e);
         }
 
-        // BUG FIX: removed System.out.println(brevoApiKey) — this was leaking your API key
-        // to stdout/logs in every environment including production.
+
     }
 
     public void sendVerificationEmail(String email, String name, String otp) {

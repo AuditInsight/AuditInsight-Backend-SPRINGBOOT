@@ -17,8 +17,7 @@ public class JwtUtil {
     @Value("${jwt.secret}")
     private String secret;
 
-    // BUG FIX: 5 minutes is very short for a real app — tokens expire before users finish a workflow.
-    // Increased to 60 minutes. Adjust to your needs.
+
     private static final long EXPIRATION_MS = 1000 * 60 * 60; // 60 minutes
 
     public String generateToken(String username, String role) {
@@ -30,7 +29,6 @@ public class JwtUtil {
                 .setSubject(username)
                 .setIssuedAt(new Date())
                 .setExpiration(new Date(System.currentTimeMillis() + EXPIRATION_MS))
-                // BUG FIX: always use explicit UTF-8 charset — platform default can differ across environments
                 .signWith(Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8)))
                 .compact();
     }
@@ -45,7 +43,6 @@ public class JwtUtil {
 
     public Claims extractAllClaims(String token) {
         return Jwts.parserBuilder()
-                // BUG FIX: use explicit UTF-8 charset — must match the charset used when signing
                 .setSigningKey(Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8)))
                 .build()
                 .parseClaimsJws(token)
