@@ -12,12 +12,11 @@ services:
       POSTGRES_PASSWORD: postgres
 
     ports:
-      - "5433:5432"
+      - "5432:5432"
 
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
-    restart: always
 
   backend:
     build: .
@@ -27,22 +26,25 @@ services:
       - postgres
 
     ports:
-      - "8081:8080"
+      - "${PORT}:${PORT}"
 
     environment:
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/AuditInsightDatabase
-      SPRING_DATASOURCE_USERNAME: postgres
-      SPRING_DATASOURCE_PASSWORD: postgres
+      SPRING_DATASOURCE_URL: ${SPRING_DATASOURCE_URL_PROD}
+      SPRING_DATASOURCE_USERNAME: ${SPRING_DATASOURCE_USERNAME}
+      SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD}
 
-      JWT_SECRET: 8f93d7bc4ea812fa90c32d1f73cbb2d19fa472839d7cb19384ae2f73db871c9a
+      JWT_SECRET: ${JWT_SECRET}
 
-      SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_GOOGLE_CLIENT_ID: your_google_client_id
-      SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_GOOGLE_CLIENT_SECRET: your_google_client_secret
+      SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_ID}
 
-      SPRING_MAIL_USERNAME: your_email@gmail.com
-      SPRING_MAIL_PASSWORD: your_email_app_password
+      BREVO_API: ${BREVO_API}
+      BREVO_MAIL: ${BREVO_MAIL}
+      BREVO_SENDER_NAME: ${BREVO_SENDER_NAME}
 
-    restart: always
+      SPRING_PROFILES_ACTIVE: prod
+      PORT: ${PORT}
+
 
 volumes:
   postgres_data:
