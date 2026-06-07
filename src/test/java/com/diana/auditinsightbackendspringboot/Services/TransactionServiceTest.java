@@ -12,7 +12,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.http.HttpStatus;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
@@ -23,6 +22,7 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -33,6 +33,7 @@ class TransactionServiceTest {
     @Mock private ReviewQueueRepository reviewRepo;
     @Mock private OrganisationMemberRepository memberRepo;
     @Mock private UserRepository userRepo;
+    @Mock private NotificationService notificationService;
 
     private TransactionService service;
 
@@ -40,7 +41,8 @@ class TransactionServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new TransactionService(txnRepo, evidenceRepo, reviewRepo, memberRepo, userRepo);
+        service = new TransactionService(txnRepo, evidenceRepo, reviewRepo, memberRepo, userRepo,
+                notificationService);
     }
 
     // ──────────────────────────── createTransaction ───────────────────────────
@@ -50,10 +52,13 @@ class TransactionServiceTest {
         mockActiveMember("client@test.com", 1L, Role.CLIENT);
         when(txnRepo.countByOrganisationId(ORG_ID)).thenReturn(Mono.just(0L));
         when(txnRepo.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
+        when(notificationService.notifyTransactionCreated(any(), anyString(), anyString(), anyString()))
+                .thenReturn(Mono.empty());
 
         StepVerifier.create(service.createTransaction("client@test.com", createRequest()))
                 .expectNextMatches(r -> r.getId().equals("TXN-0001")
                         && r.getName().equals("Office Supplies")
+                        && r.getCreatedBy().equals("Test User")
                         && r.getEvidenceStatus() == EvidenceStatus.MISSING
                         && r.getStatus() == TransactionStatus.PENDING)
                 .verifyComplete();
@@ -64,9 +69,12 @@ class TransactionServiceTest {
         mockActiveMember("member@test.com", 2L, Role.MEMBER);
         when(txnRepo.countByOrganisationId(ORG_ID)).thenReturn(Mono.just(5L));
         when(txnRepo.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
+        when(notificationService.notifyTransactionCreated(any(), anyString(), anyString(), anyString()))
+                .thenReturn(Mono.empty());
 
         StepVerifier.create(service.createTransaction("member@test.com", createRequest()))
-                .expectNextMatches(r -> r.getId().equals("TXN-0006"))
+                .expectNextMatches(r -> r.getId().equals("TXN-0006")
+                        && r.getCreatedBy().equals("Test User"))
                 .verifyComplete();
     }
 
@@ -97,13 +105,25 @@ class TransactionServiceTest {
     @Test
     void listTransactions_activeMember_returnsAll() {
         mockActiveMember("member@test.com", 1L, Role.MEMBER);
+        when(userRepo.findById(1L)).thenReturn(Mono.just(user(1L, "member@test.com", Role.MEMBER)));
         Transaction t1 = txn("TXN-0001");
         Transaction t2 = txn("TXN-0002");
         when(txnRepo.findAllByOrganisationId(ORG_ID)).thenReturn(Flux.just(t1, t2));
 
         StepVerifier.create(service.listTransactions(ORG_ID, "member@test.com"))
-                .expectNextMatches(r -> r.getId().equals("TXN-0001"))
+                .expectNextMatches(r -> r.getId().equals("TXN-0001") && r.getCreatedBy().equals("Test User"))
                 .expectNextMatches(r -> r.getId().equals("TXN-0002"))
+                .verifyComplete();
+    }
+
+    @Test
+    void listTransactions_creatorNotFound_fallsBackToUnknown() {
+        mockActiveMember("member@test.com", 1L, Role.MEMBER);
+        when(userRepo.findById(1L)).thenReturn(Mono.empty());
+        when(txnRepo.findAllByOrganisationId(ORG_ID)).thenReturn(Flux.just(txn("TXN-0001")));
+
+        StepVerifier.create(service.listTransactions(ORG_ID, "member@test.com"))
+                .expectNextMatches(r -> r.getCreatedBy().equals("Unknown"))
                 .verifyComplete();
     }
 
@@ -114,12 +134,14 @@ class TransactionServiceTest {
         Transaction t = txn("TXN-0001");
         when(txnRepo.findById("TXN-0001")).thenReturn(Mono.just(t));
         mockActiveMember("client@test.com", 1L, Role.CLIENT);
+        when(userRepo.findById(1L)).thenReturn(Mono.just(user(1L, "client@test.com", Role.CLIENT)));
 
         Evidence ev = evidence("TXN-0001");
         when(evidenceRepo.findAllByTransactionId("TXN-0001")).thenReturn(Flux.just(ev));
 
         StepVerifier.create(service.getTransaction("TXN-0001", "client@test.com"))
                 .expectNextMatches(r -> r.getId().equals("TXN-0001")
+                        && r.getCreatedBy().equals("Test User")
                         && r.getEvidence() != null
                         && r.getEvidence().size() == 1)
                 .verifyComplete();
@@ -144,8 +166,8 @@ class TransactionServiceTest {
         when(txnRepo.findById("TXN-0001")).thenReturn(Mono.just(t));
         mockActiveMember("client@test.com", 1L, Role.CLIENT);
         when(txnRepo.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
+        when(userRepo.findById(1L)).thenReturn(Mono.just(user(1L, "client@test.com", Role.CLIENT)));
 
-        // Deduplication check — no existing flag
         when(reviewRepo.existsByTransactionIdAndFlaggedByAndStatus("TXN-0001", "system", ReviewStatus.OPEN))
                 .thenReturn(Mono.just(false));
         when(reviewRepo.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
@@ -154,7 +176,8 @@ class TransactionServiceTest {
         req.setStatus(TransactionStatus.COMPLETED);
 
         StepVerifier.create(service.updateStatus("TXN-0001", "client@test.com", req))
-                .expectNextMatches(r -> r.getStatus() == TransactionStatus.COMPLETED)
+                .expectNextMatches(r -> r.getStatus() == TransactionStatus.COMPLETED
+                        && r.getCreatedBy().equals("Test User"))
                 .verifyComplete();
     }
 

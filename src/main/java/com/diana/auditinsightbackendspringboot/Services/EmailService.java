@@ -237,6 +237,105 @@ public class EmailService {
         sendEmail(email, "Your role in " + orgName + " has been updated", html);
     }
 
+    public void sendTransactionCreatedEmail(String email, String clientName, String orgName,
+                                            String txnId, String txnName, String creatorName) {
+        if (email == null) return;
+        String html = String.format("""
+                <html><body style='font-family:Arial,sans-serif;'>
+                  <div style='max-width:600px;margin:auto;padding:20px;border:1px solid #ddd;'>
+                    <h2 style='color:#2c3e50;'>New Transaction Recorded</h2>
+                    <p>Hello <b>%s</b>,</p>
+                    <p>A new transaction has been recorded in your organisation <b>%s</b>.</p>
+                    <table style='width:100%%;border-collapse:collapse;margin:16px 0;'>
+                      <tr><td style='padding:8px;background:#f9f9f9;font-weight:bold;width:40%%'>Transaction ID</td>
+                          <td style='padding:8px;background:#f9f9f9;'>%s</td></tr>
+                      <tr><td style='padding:8px;font-weight:bold;'>Name</td>
+                          <td style='padding:8px;'>%s</td></tr>
+                      <tr><td style='padding:8px;background:#f9f9f9;font-weight:bold;'>Created By</td>
+                          <td style='padding:8px;background:#f9f9f9;'>%s</td></tr>
+                    </table>
+                    <p>Log in to AuditInsight to view the full details.</p>
+                    <small>This is an automated notification from AuditInsight.</small>
+                  </div>
+                </body></html>""", clientName, orgName, txnId, txnName, creatorName);
+        sendEmail(email, "New Transaction Recorded in " + orgName, html);
+    }
+
+    public void sendEvidenceUploadedEmail(String email, String clientName, String orgName,
+                                          String txnId, String documentName, String uploaderName) {
+        if (email == null) return;
+        String html = String.format("""
+                <html><body style='font-family:Arial,sans-serif;'>
+                  <div style='max-width:600px;margin:auto;padding:20px;border:1px solid #ddd;'>
+                    <h2 style='color:#27ae60;'>Evidence Uploaded</h2>
+                    <p>Hello <b>%s</b>,</p>
+                    <p>New evidence has been uploaded in your organisation <b>%s</b>.</p>
+                    <table style='width:100%%;border-collapse:collapse;margin:16px 0;'>
+                      <tr><td style='padding:8px;background:#f9f9f9;font-weight:bold;width:40%%'>Transaction ID</td>
+                          <td style='padding:8px;background:#f9f9f9;'>%s</td></tr>
+                      <tr><td style='padding:8px;font-weight:bold;'>Document</td>
+                          <td style='padding:8px;'>%s</td></tr>
+                      <tr><td style='padding:8px;background:#f9f9f9;font-weight:bold;'>Uploaded By</td>
+                          <td style='padding:8px;background:#f9f9f9;'>%s</td></tr>
+                    </table>
+                    <p>Log in to AuditInsight to review the uploaded evidence.</p>
+                    <small>This is an automated notification from AuditInsight.</small>
+                  </div>
+                </body></html>""", clientName, orgName, txnId, documentName, uploaderName);
+        sendEmail(email, "Evidence Uploaded for Transaction " + txnId, html);
+    }
+
+    public void sendIssueFlaggedEmail(String email, String clientName, String orgName,
+                                      String txnId, String issueType, String description,
+                                      String auditorName) {
+        if (email == null) return;
+        String html = String.format("""
+                <html><body style='font-family:Arial,sans-serif;'>
+                  <div style='max-width:600px;margin:auto;padding:20px;border:1px solid #ddd;'>
+                    <h2 style='color:#e67e22;'>Issue Flagged on Transaction</h2>
+                    <p>Hello <b>%s</b>,</p>
+                    <p>An auditor has flagged an issue on a transaction in your organisation <b>%s</b>.</p>
+                    <table style='width:100%%;border-collapse:collapse;margin:16px 0;'>
+                      <tr><td style='padding:8px;background:#f9f9f9;font-weight:bold;width:40%%'>Transaction ID</td>
+                          <td style='padding:8px;background:#f9f9f9;'>%s</td></tr>
+                      <tr><td style='padding:8px;font-weight:bold;'>Issue Type</td>
+                          <td style='padding:8px;'>%s</td></tr>
+                      <tr><td style='padding:8px;background:#f9f9f9;font-weight:bold;'>Description</td>
+                          <td style='padding:8px;background:#f9f9f9;'>%s</td></tr>
+                      <tr><td style='padding:8px;font-weight:bold;'>Flagged By</td>
+                          <td style='padding:8px;'>%s</td></tr>
+                    </table>
+                    <p>Please log in to AuditInsight to review and address this issue.</p>
+                    <small>This is an automated notification from AuditInsight.</small>
+                  </div>
+                </body></html>""", clientName, orgName, txnId, issueType, description, auditorName);
+        sendEmail(email, "Issue Flagged on Transaction " + txnId + " — Action Required", html);
+    }
+
+    public void sendIssueResolvedEmail(String email, String clientName, String orgName,
+                                       String txnId, String resolutionNote, String resolvedByName) {
+        if (email == null) return;
+        String html = String.format("""
+                <html><body style='font-family:Arial,sans-serif;'>
+                  <div style='max-width:600px;margin:auto;padding:20px;border:1px solid #ddd;'>
+                    <h2 style='color:#27ae60;'>Issue Resolved</h2>
+                    <p>Hello <b>%s</b>,</p>
+                    <p>A flagged issue on a transaction in <b>%s</b> has been marked as resolved.</p>
+                    <table style='width:100%%;border-collapse:collapse;margin:16px 0;'>
+                      <tr><td style='padding:8px;background:#f9f9f9;font-weight:bold;width:40%%'>Transaction ID</td>
+                          <td style='padding:8px;background:#f9f9f9;'>%s</td></tr>
+                      <tr><td style='padding:8px;font-weight:bold;'>Resolution Note</td>
+                          <td style='padding:8px;'>%s</td></tr>
+                      <tr><td style='padding:8px;background:#f9f9f9;font-weight:bold;'>Resolved By</td>
+                          <td style='padding:8px;background:#f9f9f9;'>%s</td></tr>
+                    </table>
+                    <p>Log in to AuditInsight to view the full audit trail.</p>
+                    <small>This is an automated notification from AuditInsight.</small>
+                  </div>
+                </body></html>""", clientName, orgName, txnId, resolutionNote, resolvedByName);
+        sendEmail(email, "Issue Resolved for Transaction " + txnId, html);
+    }
+
     public void sendPasswordChangeReminderEmail(String email, String name) {
         if (email == null) {
             log.error("Cannot send password change reminder: missing email");

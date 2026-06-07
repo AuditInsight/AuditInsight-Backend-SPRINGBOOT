@@ -1,6 +1,5 @@
 package com.diana.auditinsightbackendspringboot.Services;
 
-import com.diana.auditinsightbackendspringboot.DTOs.EvidenceResponse;
 import com.diana.auditinsightbackendspringboot.Enum.*;
 import com.diana.auditinsightbackendspringboot.Exceptions.Custom.ForbiddenException;
 import com.diana.auditinsightbackendspringboot.Exceptions.Custom.InvalidRecord;
@@ -38,6 +37,7 @@ class EvidenceServiceTest {
     @Mock private UserRepository userRepo;
     @Mock private TransactionService txnService;
     @Mock private CloudinaryService cloudinaryService;
+    @Mock private NotificationService notificationService;
 
     private EvidenceService service;
 
@@ -47,7 +47,7 @@ class EvidenceServiceTest {
     @BeforeEach
     void setUp() {
         service = new EvidenceService(evidenceRepo, txnRepo, memberRepo, userRepo,
-                txnService, cloudinaryService);
+                txnService, cloudinaryService, notificationService);
     }
 
     // ──────────────────────────── uploadEvidence ──────────────────────────────
@@ -60,6 +60,8 @@ class EvidenceServiceTest {
                 .thenReturn(Mono.just("https://res.cloudinary.com/test/invoice.pdf"));
         when(evidenceRepo.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
         when(txnService.recalculateEvidenceStatus("TXN-0001")).thenReturn(Mono.empty());
+        when(notificationService.notifyEvidenceUploaded(any(), anyString(), anyString(), anyString()))
+                .thenReturn(Mono.empty());
 
         StepVerifier.create(service.uploadEvidence("client@test.com", filePart("invoice.pdf"),
                         ORG_ID, "TXN-0001", "Supplier Invoice",
@@ -78,6 +80,8 @@ class EvidenceServiceTest {
                 .thenReturn(Mono.just("https://res.cloudinary.com/test/receipt.jpg"));
         when(evidenceRepo.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
         when(txnService.recalculateEvidenceStatus("TXN-0001")).thenReturn(Mono.empty());
+        when(notificationService.notifyEvidenceUploaded(any(), anyString(), anyString(), anyString()))
+                .thenReturn(Mono.empty());
 
         StepVerifier.create(service.uploadEvidence("member@test.com", filePart("receipt.jpg"),
                         ORG_ID, "TXN-0001", "Receipt",
@@ -239,7 +243,6 @@ class EvidenceServiceTest {
 
     private FilePart filePart(String filename) {
         FilePart fp = mock(FilePart.class);
-        // lenient: some tests fail before filename()/content() are ever called
         lenient().when(fp.filename()).thenReturn(filename);
         DataBuffer buf = new DefaultDataBufferFactory().wrap("test-file-content".getBytes());
         lenient().when(fp.content()).thenReturn(Flux.just(buf));

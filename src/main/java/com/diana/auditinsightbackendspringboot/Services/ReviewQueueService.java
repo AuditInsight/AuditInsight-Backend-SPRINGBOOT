@@ -25,15 +25,18 @@ public class ReviewQueueService {
     private final TransactionRepository txnRepo;
     private final OrganisationMemberRepository memberRepo;
     private final UserRepository userRepo;
+    private final NotificationService notificationService;
 
     public ReviewQueueService(ReviewQueueRepository reviewRepo,
                               TransactionRepository txnRepo,
                               OrganisationMemberRepository memberRepo,
-                              UserRepository userRepo) {
+                              UserRepository userRepo,
+                              NotificationService notificationService) {
         this.reviewRepo = reviewRepo;
         this.txnRepo = txnRepo;
         this.memberRepo = memberRepo;
         this.userRepo = userRepo;
+        this.notificationService = notificationService;
     }
 
 
@@ -90,7 +93,15 @@ public class ReviewQueueService {
                                 rq.setStatus(ReviewStatus.OPEN);
                                 rq.setFlaggedBy(String.valueOf(ctx.user().getId()));
                                 rq.setCreatedAt(LocalDateTime.now());
-                                return reviewRepo.save(rq).map(this::toResponse);
+                                return reviewRepo.save(rq)
+                                        .flatMap(saved -> notificationService
+                                                .notifyIssueFlagged(
+                                                        saved.getOrganisationId(),
+                                                        saved.getTransactionId(),
+                                                        saved.getIssueType().name(),
+                                                        saved.getDescription(),
+                                                        ctx.user().getFullName())
+                                                .thenReturn(toResponse(saved)));
                             });
                 });
     }
@@ -128,7 +139,14 @@ public class ReviewQueueService {
                             rq.setResolvedBy(ctx.user().getId());
                             rq.setResolutionNote(req.getResolutionNote());
                             rq.setResolvedAt(LocalDateTime.now());
-                            return reviewRepo.save(rq).map(this::toResponse);
+                            return reviewRepo.save(rq)
+                                    .flatMap(saved -> notificationService
+                                            .notifyIssueResolved(
+                                                    saved.getOrganisationId(),
+                                                    saved.getTransactionId(),
+                                                    saved.getResolutionNote(),
+                                                    ctx.user().getFullName())
+                                            .thenReturn(toResponse(saved)));
                         }));
     }
 }

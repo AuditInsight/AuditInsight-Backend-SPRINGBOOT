@@ -22,6 +22,7 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -31,6 +32,7 @@ class ReviewQueueServiceTest {
     @Mock private TransactionRepository txnRepo;
     @Mock private OrganisationMemberRepository memberRepo;
     @Mock private UserRepository userRepo;
+    @Mock private NotificationService notificationService;
 
     private ReviewQueueService service;
 
@@ -39,7 +41,7 @@ class ReviewQueueServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new ReviewQueueService(reviewRepo, txnRepo, memberRepo, userRepo);
+        service = new ReviewQueueService(reviewRepo, txnRepo, memberRepo, userRepo, notificationService);
     }
 
     // ──────────────────────────── flagIssue ──────────────────────────────────
@@ -50,6 +52,8 @@ class ReviewQueueServiceTest {
         Transaction t = txn("TXN-0001");
         when(txnRepo.findById("TXN-0001")).thenReturn(Mono.just(t));
         when(reviewRepo.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
+        when(notificationService.notifyIssueFlagged(any(), anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(Mono.empty());
 
         StepVerifier.create(service.flagIssue("auditor@test.com", flagRequest()))
                 .expectNextMatches(r -> r.getIssueType() == IssueType.COMPLIANCE_ISSUE
@@ -162,6 +166,8 @@ class ReviewQueueServiceTest {
         when(reviewRepo.findById(ITEM_ID)).thenReturn(Mono.just(rq));
         mockActiveMember("client@test.com", 1L, Role.CLIENT);
         when(reviewRepo.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
+        when(notificationService.notifyIssueResolved(any(), anyString(), anyString(), anyString()))
+                .thenReturn(Mono.empty());
 
         ResolveReviewQueueRequest req = new ResolveReviewQueueRequest();
         req.setResolutionNote("Evidence uploaded and verified.");
@@ -180,6 +186,8 @@ class ReviewQueueServiceTest {
         when(reviewRepo.findById(ITEM_ID)).thenReturn(Mono.just(rq));
         mockActiveMember("member@test.com", 2L, Role.MEMBER);
         when(reviewRepo.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
+        when(notificationService.notifyIssueResolved(any(), anyString(), anyString(), anyString()))
+                .thenReturn(Mono.empty());
 
         ResolveReviewQueueRequest req = new ResolveReviewQueueRequest();
         req.setResolutionNote("Reconciliation completed.");

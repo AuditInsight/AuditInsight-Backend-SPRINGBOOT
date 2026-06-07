@@ -29,19 +29,22 @@ public class EvidenceService {
     private final UserRepository userRepo;
     private final TransactionService txnService;
     private final CloudinaryService cloudinaryService;
+    private final NotificationService notificationService;
 
     public EvidenceService(EvidenceRepository evidenceRepo,
                            TransactionRepository txnRepo,
                            OrganisationMemberRepository memberRepo,
                            UserRepository userRepo,
                            TransactionService txnService,
-                           CloudinaryService cloudinaryService) {
+                           CloudinaryService cloudinaryService,
+                           NotificationService notificationService) {
         this.evidenceRepo = evidenceRepo;
         this.txnRepo = txnRepo;
         this.memberRepo = memberRepo;
         this.userRepo = userRepo;
         this.txnService = txnService;
         this.cloudinaryService = cloudinaryService;
+        this.notificationService = notificationService;
     }
 
 
@@ -157,6 +160,11 @@ public class EvidenceService {
                                                             })
                                                             .flatMap(saved ->
                                                                     txnService.recalculateEvidenceStatus(transactionId)
+                                                                            .then(notificationService.notifyEvidenceUploaded(
+                                                                                    organisationId,
+                                                                                    transactionId,
+                                                                                    documentName,
+                                                                                    user.getFullName()))
                                                                             .thenReturn(toResponse(saved)));
                                                 })
                                 )

@@ -21,17 +21,20 @@ public class TransactionService {
     private final ReviewQueueRepository reviewRepo;
     private final OrganisationMemberRepository memberRepo;
     private final UserRepository userRepo;
+    private final NotificationService notificationService;
 
     public TransactionService(TransactionRepository txnRepo,
                               EvidenceRepository evidenceRepo,
                               ReviewQueueRepository reviewRepo,
                               OrganisationMemberRepository memberRepo,
-                              UserRepository userRepo) {
+                              UserRepository userRepo,
+                              NotificationService notificationService) {
         this.txnRepo = txnRepo;
         this.evidenceRepo = evidenceRepo;
         this.reviewRepo = reviewRepo;
         this.memberRepo = memberRepo;
         this.userRepo = userRepo;
+        this.notificationService = notificationService;
     }
 
 
@@ -101,7 +104,14 @@ public class TransactionService {
                                 t.setCreatedAt(LocalDateTime.now());
                                 t.setNewRecord(true);
 
-                                return txnRepo.save(t).map(saved -> toResponse(saved, ctx.user().getFullName()));
+                                return txnRepo.save(t)
+                                        .flatMap(saved -> notificationService
+                                                .notifyTransactionCreated(
+                                                        saved.getOrganisationId(),
+                                                        saved.getId(),
+                                                        saved.getName(),
+                                                        ctx.user().getFullName())
+                                                .thenReturn(toResponse(saved, ctx.user().getFullName())));
                             });
                 });
     }
