@@ -1,5 +1,6 @@
 package com.diana.auditinsightbackendspringboot.Models;
 
+import com.diana.auditinsightbackendspringboot.Enum.OrganisationType;
 import lombok.Getter;
 import lombok.Setter;
 import org.springframework.data.annotation.Id;
@@ -22,7 +23,10 @@ public class Organisation {
 
     private String name;
 
-    private String industry;
+    private OrganisationType industry;
+
+    private String size;
+
 
     @Column("fiscal_year_start")
     private String fiscalYearStart;

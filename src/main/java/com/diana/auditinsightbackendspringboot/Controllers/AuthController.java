@@ -75,7 +75,9 @@ public class AuthController {
     )
     public Mono<ResponseEntity<ResponseMessage>> changePassword(
             Authentication authentication,
-            @Valid @RequestBody ChangePasswordRequest request) {
+            @Valid @RequestBody
+
+            ChangePasswordRequest request) {
         return authService.changePassword(authentication.getName(), request)
                 .map(response -> new ResponseEntity<>(response, HttpStatus.OK));
     }

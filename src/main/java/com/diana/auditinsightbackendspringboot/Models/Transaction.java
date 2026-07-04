@@ -44,6 +44,9 @@ public class Transaction implements Persistable<String> {
     @Column("date")
     private LocalDate date;
 
+    @Column("counterparty")
+    private String counterparty;
+
     @Column("amount")
     private BigDecimal amount;
 

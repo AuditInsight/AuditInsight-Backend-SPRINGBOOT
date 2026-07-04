@@ -4,23 +4,23 @@ import com.diana.auditinsightbackendspringboot.Services.CustomOAuth2UserService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.http.HttpMethod;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.server.reactive.ServerHttpResponse;
+import org.springframework.security.authentication.ReactiveAuthenticationManager;
 import org.springframework.security.config.annotation.method.configuration.EnableReactiveMethodSecurity;
 import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity;
 import org.springframework.security.config.web.server.SecurityWebFiltersOrder;
 import org.springframework.security.config.web.server.ServerHttpSecurity;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.security.oauth2.core.user.OAuth2User;
+import org.springframework.security.oauth2.client.authentication.OAuth2LoginReactiveAuthenticationManager;
+import org.springframework.security.oauth2.client.endpoint.WebClientReactiveAuthorizationCodeTokenResponseClient;
 import org.springframework.security.web.server.SecurityWebFilterChain;
-import org.springframework.security.web.server.authentication.ServerAuthenticationSuccessHandler;
+import org.springframework.security.web.server.authentication.RedirectServerAuthenticationFailureHandler;
+import org.springframework.security.web.server.authentication.RedirectServerAuthenticationSuccessHandler;
+import org.springframework.security.web.server.context.WebSessionServerSecurityContextRepository;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.reactive.CorsConfigurationSource;
 import org.springframework.web.cors.reactive.UrlBasedCorsConfigurationSource;
 
-import java.net.URI;
 import java.util.List;
 
 @Configuration
@@ -29,14 +29,14 @@ import java.util.List;
 public class SecurityConfig {
 
     private final JwtFilter jwtFilter;
-    private final JwtUtil jwtUtil;
+    private final CustomOAuth2UserService customOAuth2UserService;
 
     @Value("${oauth2.success.redirect-url}")
     private String oauth2RedirectUrl;
 
-    public SecurityConfig(JwtFilter jwtFilter, JwtUtil jwtUtil, CustomOAuth2UserService customOAuth2UserService) {
+    public SecurityConfig(JwtFilter jwtFilter, CustomOAuth2UserService customOAuth2UserService) {
         this.jwtFilter = jwtFilter;
-        this.jwtUtil = jwtUtil;
+        this.customOAuth2UserService = customOAuth2UserService;
     }
 
     @Bean
@@ -44,6 +44,7 @@ public class SecurityConfig {
         return http
                 .csrf(ServerHttpSecurity.CsrfSpec::disable)
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+                .securityContextRepository(new WebSessionServerSecurityContextRepository())
                 .authorizeExchange(auth -> auth
                         .pathMatchers(
                                 "/api/auth/**",
@@ -59,25 +60,21 @@ public class SecurityConfig {
                         .pathMatchers("/api/client/**").hasRole("CLIENT")
                         .anyExchange().authenticated()
                 )
-                .oauth2Login(oauth2 -> oauth2
-                        .authenticationSuccessHandler(oAuth2SuccessHandler())
+                .oauth2Login(auth -> auth
+                        .authenticationManager(oAuth2AuthenticationManager())
+                        .authenticationSuccessHandler(new RedirectServerAuthenticationSuccessHandler(oauth2RedirectUrl))
+                        .authenticationFailureHandler(new RedirectServerAuthenticationFailureHandler(
+                                oauth2RedirectUrl + "?error=oauth2_failed"))
                 )
                 .addFilterAt(jwtFilter, SecurityWebFiltersOrder.AUTHENTICATION)
                 .build();
     }
 
-
-    private ServerAuthenticationSuccessHandler oAuth2SuccessHandler() {
-        return (webFilterExchange, authentication) -> {
-            OAuth2User oAuth2User = (OAuth2User) authentication.getPrincipal();
-            String email = oAuth2User.getAttribute("email");
-            String token = jwtUtil.generateToken(email, "CLIENT");
-
-            ServerHttpResponse response = webFilterExchange.getExchange().getResponse();
-            response.setStatusCode(HttpStatus.FOUND);
-            response.getHeaders().setLocation(URI.create(oauth2RedirectUrl + "?token=" + token));
-            return response.setComplete();
-        };
+    private ReactiveAuthenticationManager oAuth2AuthenticationManager() {
+        return new OAuth2LoginReactiveAuthenticationManager(
+                new WebClientReactiveAuthorizationCodeTokenResponseClient(),
+                customOAuth2UserService
+        );
     }
 
     @Bean
@@ -97,4 +94,8 @@ public class SecurityConfig {
         source.registerCorsConfiguration("/**", config);
         return source;
     }
+//    @Bean
+//    public AuthenticationManager authenticationManager(AuthenticationConfiguration configuration) {
+//        return configuration.getAuthenticationManager();
+//    }
 }

@@ -1,5 +1,6 @@
 package com.diana.auditinsightbackendspringboot.DTOs;
 
+import com.diana.auditinsightbackendspringboot.Enum.OrganisationType;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
