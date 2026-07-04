@@ -97,6 +97,7 @@ public class TransactionService {
                                 t.setDate(req.getDate());
                                 t.setAmount(req.getAmount());
                                 t.setType(req.getType());
+                                t.setCounterparty(req.getCounterparty());
                                 t.setPaymentMethod(req.getPaymentMethod());
                                 t.setStatus(TransactionStatus.PENDING);
                                 t.setEvidenceStatus(EvidenceStatus.MISSING);

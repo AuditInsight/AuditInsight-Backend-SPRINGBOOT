@@ -34,4 +34,7 @@ public class CreateTransactionRequest {
 
     @NotNull(message = "Payment method is required (BANK, MOBILE_MONEY, or CASH)")
     private PaymentMethod paymentMethod;
+
+    @NotBlank(message = "the counterparty is needed")
+    private String counterparty;
 }

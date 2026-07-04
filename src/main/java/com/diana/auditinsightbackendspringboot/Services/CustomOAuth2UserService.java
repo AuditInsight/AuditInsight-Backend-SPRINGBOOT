@@ -53,20 +53,28 @@ public class CustomOAuth2UserService extends DefaultReactiveOAuth2UserService {
                         user.setPassword("");
                         user.setRole(Role.CLIENT);
                         user.setVerified(true);
-
-                        return userRepository.save(user).flatMap(savedUser -> {
-                            ClientProfile profile = new ClientProfile();
-                            profile.setEmailAddress(email);
-                            profile.setFirstName(givenName);
-                            profile.setLastName(familyName);
-                            return clientRepository.save(profile).thenReturn(savedUser);
-                        });
+                        return userRepository.save(user);
                     }))
+                    .flatMap(user -> ensureClientProfile(user, email, givenName, familyName).thenReturn(user))
                     .map(user -> new DefaultOAuth2User(
                             Collections.singleton(new SimpleGrantedAuthority("ROLE_" + user.getRole().name())),
                             attributes,
-                            "sub"
+                            "email"
                     ));
         });
+    }
+
+    private Mono<ClientProfile> ensureClientProfile(User user, String email, String givenName, String familyName) {
+        if (user.getRole() != Role.CLIENT) {
+            return Mono.empty();
+        }
+        return clientRepository.findByEmailAddress(email)
+                .switchIfEmpty(Mono.defer(() -> {
+                    ClientProfile profile = new ClientProfile();
+                    profile.setEmailAddress(email);
+                    profile.setFirstName(givenName);
+                    profile.setLastName(familyName);
+                    return clientRepository.save(profile);
+                }));
     }
 }

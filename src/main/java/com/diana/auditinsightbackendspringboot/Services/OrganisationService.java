@@ -3,6 +3,7 @@ package com.diana.auditinsightbackendspringboot.Services;
 import com.diana.auditinsightbackendspringboot.DTOs.*;
 import com.diana.auditinsightbackendspringboot.Enum.InvitationStatus;
 import com.diana.auditinsightbackendspringboot.Enum.MemberStatus;
+import com.diana.auditinsightbackendspringboot.Enum.OrganisationType;
 import com.diana.auditinsightbackendspringboot.Enum.Role;
 import com.diana.auditinsightbackendspringboot.Exceptions.Custom.InvalidRecord;
 import com.diana.auditinsightbackendspringboot.Models.*;
@@ -94,7 +95,7 @@ public class OrganisationService {
                     r.setMessage(message);
                     r.setOrganisationId(org.getId());
                     r.setName(org.getName());
-                    r.setIndustry(org.getIndustry());
+                    r.setIndustry(org.getIndustry().name());
                     r.setFiscalYearStart(org.getFiscalYearStart());
                     r.setFiscalYearEnd(org.getFiscalYearEnd());
                     r.setDefaultCurrency(org.getDefaultCurrency());
@@ -151,6 +152,7 @@ public class OrganisationService {
                             org.setClientId(clientProfile.getId());
                             org.setName(request.getName());
                             org.setIndustry(request.getIndustry());
+                            org.setSize(request.getSize());
                             org.setFiscalYearStart(request.getFiscalYearStart());
                             org.setFiscalYearEnd(request.getFiscalYearEnd());
                             org.setDefaultCurrency(currencies.get(0));

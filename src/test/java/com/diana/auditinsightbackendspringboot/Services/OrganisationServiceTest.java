@@ -67,7 +67,7 @@ class OrganisationServiceTest {
 
         CreateOrganisationRequest req = new CreateOrganisationRequest();
         req.setName("Acme");
-        req.setIndustry("Finance");
+        req.setIndustry(OrganisationType.PRIVATE);
         req.setFiscalYearStart("01-01");
         req.setFiscalYearEnd("12-31");
         req.setCurrencies(List.of("USD"));
@@ -445,7 +445,7 @@ class OrganisationServiceTest {
         o.setId(id);
         o.setClientId(clientId);
         o.setName(name);
-        o.setIndustry("Finance");
+        o.setIndustry(OrganisationType.PRIVATE);
         o.setFiscalYearStart("01-01");
         o.setFiscalYearEnd("12-31");
         o.setDefaultCurrency("USD");
