@@ -32,7 +32,7 @@ services:
     ports:
       - "${PORT:-8080}:${PORT:-8080}"
     environment:
-      # R2DBC reactive datasource (matches application.properties: spring.r2dbc.url=${SPRING_DATABASE_URL})
+      # R2DBC reactive datasource (matches application-production.properties: spring.r2dbc.url=${SPRING_DATABASE_URL})
       SPRING_DATABASE_URL: r2dbc:postgresql://postgres:5432/AuditInsightDatabase
       SPRING_DATABASE_USERNAME: ${SPRING_DATABASE_USERNAME:-postgres}
       SPRING_DATABASE_PASSWORD: ${SPRING_DATABASE_PASSWORD:-postgres}
