@@ -34,6 +34,12 @@ public class SecurityConfig {
     @Value("${oauth2.success.redirect-url}")
     private String oauth2RedirectUrl;
 
+    @Value("${oauth2.failure.redirect-url}")
+    private String oauth2FailureRedirectUrl;
+
+    @Value("#{'${cors.allowed-origins}'.split(',')}")
+    private List<String> corsAllowedOrigins;
+
     public SecurityConfig(JwtFilter jwtFilter, CustomOAuth2UserService customOAuth2UserService) {
         this.jwtFilter = jwtFilter;
         this.customOAuth2UserService = customOAuth2UserService;
@@ -64,7 +70,7 @@ public class SecurityConfig {
                         .authenticationManager(oAuth2AuthenticationManager())
                         .authenticationSuccessHandler(new RedirectServerAuthenticationSuccessHandler(oauth2RedirectUrl))
                         .authenticationFailureHandler(new RedirectServerAuthenticationFailureHandler(
-                                oauth2RedirectUrl + "?error=oauth2_failed"))
+                                oauth2FailureRedirectUrl + "?error=oauth2_failed"))
                 )
                 .addFilterAt(jwtFilter, SecurityWebFiltersOrder.AUTHENTICATION)
                 .build();
@@ -85,7 +91,7 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
-        config.setAllowedOriginPatterns(List.of("*"));
+        config.setAllowedOrigins(corsAllowedOrigins);
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
         config.setAllowedHeaders(List.of("*"));
         config.setAllowCredentials(true);

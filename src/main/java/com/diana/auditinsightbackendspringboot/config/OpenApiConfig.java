@@ -6,8 +6,11 @@ import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.info.Info;
 import io.swagger.v3.oas.models.security.SecurityRequirement;
 import io.swagger.v3.oas.models.security.SecurityScheme;
+import io.swagger.v3.oas.models.servers.Server;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+
+import java.util.List;
 
 @Configuration
 public class OpenApiConfig {
@@ -24,9 +27,17 @@ public class OpenApiConfig {
 
                                 **Google OAuth2 login (CLIENT role only):**
                                 Navigate to `/api/auth/social-login/google` in your browser. \
-                                After Google authentication you will be redirected with a JWT token as a query \
-                                parameter. Copy that token and paste it into the **Authorize** dialog above.
+                                After Google authentication succeeds you'll be signed in via a browser session \
+                                (no token needed for that session). To call protected endpoints from Swagger's \
+                                "Try it out" instead, register/login normally and paste the returned JWT into \
+                                the **Authorize** dialog above.
                                 """))
+                .servers(List.of(
+                        new Server().url("https://auditinsight-backend-springboot-production.up.railway.app")
+                                .description("Production "),
+                        new Server().url("http://localhost:8080")
+                                .description("Development")
+                ))
                 .externalDocs(new ExternalDocumentation()
                         .description("Sign in with Google")
                         .url("/api/auth/social-login/google"))
