@@ -15,7 +15,6 @@ import org.springframework.security.oauth2.client.authentication.OAuth2LoginReac
 import org.springframework.security.oauth2.client.endpoint.WebClientReactiveAuthorizationCodeTokenResponseClient;
 import org.springframework.security.web.server.SecurityWebFilterChain;
 import org.springframework.security.web.server.authentication.RedirectServerAuthenticationFailureHandler;
-import org.springframework.security.web.server.authentication.RedirectServerAuthenticationSuccessHandler;
 import org.springframework.security.web.server.context.WebSessionServerSecurityContextRepository;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.reactive.CorsConfigurationSource;
@@ -29,20 +28,21 @@ import java.util.List;
 public class SecurityConfig {
 
     private final JwtFilter jwtFilter;
-    private final CustomOAuth2UserService customOAuth2UserService;
+    private final
+    CustomOAuth2UserService customOAuth2UserService;
+    private final OAuth2AuthenticationSuccessHandler oAuth2AuthenticationSuccessHandler;
 
     @Value("${oauth2.success.redirect-url}")
     private String oauth2RedirectUrl;
 
-    @Value("${oauth2.failure.redirect-url}")
-    private String oauth2FailureRedirectUrl;
-
     @Value("#{'${cors.allowed-origins}'.split(',')}")
     private List<String> corsAllowedOrigins;
 
-    public SecurityConfig(JwtFilter jwtFilter, CustomOAuth2UserService customOAuth2UserService) {
+    public SecurityConfig(JwtFilter jwtFilter, CustomOAuth2UserService customOAuth2UserService,
+                           OAuth2AuthenticationSuccessHandler oAuth2AuthenticationSuccessHandler) {
         this.jwtFilter = jwtFilter;
         this.customOAuth2UserService = customOAuth2UserService;
+        this.oAuth2AuthenticationSuccessHandler = oAuth2AuthenticationSuccessHandler;
     }
 
     @Bean
@@ -68,9 +68,9 @@ public class SecurityConfig {
                 )
                 .oauth2Login(auth -> auth
                         .authenticationManager(oAuth2AuthenticationManager())
-                        .authenticationSuccessHandler(new RedirectServerAuthenticationSuccessHandler(oauth2RedirectUrl))
+                        .authenticationSuccessHandler(oAuth2AuthenticationSuccessHandler)
                         .authenticationFailureHandler(new RedirectServerAuthenticationFailureHandler(
-                                oauth2FailureRedirectUrl + "?error=oauth2_failed"))
+                                oauth2RedirectUrl + "?error=oauth2_failed"))
                 )
                 .addFilterAt(jwtFilter, SecurityWebFiltersOrder.AUTHENTICATION)
                 .build();
