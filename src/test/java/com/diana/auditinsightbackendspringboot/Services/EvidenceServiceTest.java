@@ -33,6 +33,7 @@ class EvidenceServiceTest {
 
     @Mock private EvidenceRepository evidenceRepo;
     @Mock private TransactionRepository txnRepo;
+    @Mock private OrganisationRepository organisationRepo;
     @Mock private OrganisationMemberRepository memberRepo;
     @Mock private UserRepository userRepo;
     @Mock private TransactionService txnService;
@@ -46,8 +47,10 @@ class EvidenceServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new EvidenceService(evidenceRepo, txnRepo, memberRepo, userRepo,
+        service = new EvidenceService(evidenceRepo, txnRepo, organisationRepo, memberRepo, userRepo,
                 txnService, cloudinaryService, notificationService);
+        lenient().when(organisationRepo.findById(ORG_ID))
+                .thenReturn(Mono.just(organisation(ORG_ID, OrganisationType.PRIVATE)));
     }
 
     // ──────────────────────────── uploadEvidence ──────────────────────────────
@@ -171,6 +174,59 @@ class EvidenceServiceTest {
                 .verify();
     }
 
+    @Test
+    void uploadEvidence_organisationNotFound_returnsError() {
+        when(organisationRepo.findById(ORG_ID)).thenReturn(Mono.empty());
+
+        StepVerifier.create(service.uploadEvidence("client@test.com", filePart("invoice.pdf"),
+                        ORG_ID, "TXN-0001", "Invoice",
+                        "Purchases and Procurement", "Supplier Invoices", null))
+                .expectErrorMatches(e -> e instanceof InvalidRecord
+                        && e.getMessage().equals("Organisation not found"))
+                .verify();
+    }
+
+    @Test
+    void uploadEvidence_ngoOrg_ngoFolder_succeeds() {
+        when(organisationRepo.findById(ORG_ID)).thenReturn(Mono.just(organisation(ORG_ID, OrganisationType.NGO)));
+        mockActiveMember("client@test.com", 1L, Role.CLIENT);
+        when(txnRepo.findById("TXN-0001")).thenReturn(Mono.just(txn("TXN-0001")));
+        when(cloudinaryService.upload(any(byte[].class), anyString()))
+                .thenReturn(Mono.just("https://res.cloudinary.com/test/donor-report.pdf"));
+        when(evidenceRepo.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
+        when(txnService.recalculateEvidenceStatus("TXN-0001")).thenReturn(Mono.empty());
+        when(notificationService.notifyEvidenceUploaded(any(), anyString(), anyString(), anyString()))
+                .thenReturn(Mono.empty());
+
+        StepVerifier.create(service.uploadEvidence("client@test.com", filePart("donor-report.pdf"),
+                        ORG_ID, "TXN-0001", "Donor Report",
+                        "Financial Reporting", "Donor Financial Reports", null))
+                .expectNextMatches(r -> r.getFileType().equals("pdf"))
+                .verifyComplete();
+    }
+
+    @Test
+    void uploadEvidence_ngoFolder_rejectedForPrivateOrg() {
+        StepVerifier.create(service.uploadEvidence("client@test.com", filePart("donor-report.pdf"),
+                        ORG_ID, "TXN-0001", "Donor Report",
+                        "Financial Reporting", "Donor Financial Reports", null))
+                .expectErrorMatches(e -> e instanceof InvalidRecord
+                        && e.getMessage().contains("Invalid folder or subfolder"))
+                .verify();
+    }
+
+    @Test
+    void uploadEvidence_privateFolder_rejectedForNgoOrg() {
+        when(organisationRepo.findById(ORG_ID)).thenReturn(Mono.just(organisation(ORG_ID, OrganisationType.NGO)));
+
+        StepVerifier.create(service.uploadEvidence("client@test.com", filePart("invoice.pdf"),
+                        ORG_ID, "TXN-0001", "Invoice",
+                        "Sales Evidence", "Receipts", null))
+                .expectErrorMatches(e -> e instanceof InvalidRecord
+                        && e.getMessage().contains("Invalid folder or subfolder"))
+                .verify();
+    }
+
     // ──────────────────────────── listByOrg ──────────────────────────────────
 
     @Test
@@ -282,6 +338,13 @@ class EvidenceServiceTest {
         t.setCreatedBy(1L);
         t.setCreatedAt(LocalDateTime.now());
         return t;
+    }
+
+    private Organisation organisation(UUID id, OrganisationType type) {
+        Organisation org = new Organisation();
+        org.setId(id);
+        org.setIndustry(type);
+        return org;
     }
 
     private Evidence evidence(UUID id, String txnId) {
