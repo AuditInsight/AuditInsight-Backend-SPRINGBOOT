@@ -25,6 +25,7 @@ public class EvidenceService {
 
     private final EvidenceRepository evidenceRepo;
     private final TransactionRepository txnRepo;
+    private final OrganisationRepository organisationRepo;
     private final OrganisationMemberRepository memberRepo;
     private final UserRepository userRepo;
     private final TransactionService txnService;
@@ -33,6 +34,7 @@ public class EvidenceService {
 
     public EvidenceService(EvidenceRepository evidenceRepo,
                            TransactionRepository txnRepo,
+                           OrganisationRepository organisationRepo,
                            OrganisationMemberRepository memberRepo,
                            UserRepository userRepo,
                            TransactionService txnService,
@@ -40,6 +42,7 @@ public class EvidenceService {
                            NotificationService notificationService) {
         this.evidenceRepo = evidenceRepo;
         this.txnRepo = txnRepo;
+        this.organisationRepo = organisationRepo;
         this.memberRepo = memberRepo;
         this.userRepo = userRepo;
         this.txnService = txnService;
@@ -118,12 +121,15 @@ public class EvidenceService {
                                                  UUID organisationId, String transactionId,
                                                  String documentName, String folder,
                                                  String subfolder, String notes) {
-        if (!EvidenceFolderValidator.isValid(folder, subfolder)) {
-            return Mono.error(new InvalidRecord(
-                    "Invalid folder or subfolder. Check the allowed evidence folder structure."));
-        }
-
-        return detectFileType(filePart)
+        return organisationRepo.findById(organisationId)
+                .switchIfEmpty(Mono.error(new InvalidRecord("Organisation not found")))
+                .flatMap(org -> {
+                    if (!EvidenceFolderValidator.isValid(org.getIndustry(), folder, subfolder)) {
+                        return Mono.error(new InvalidRecord(
+                                "Invalid folder or subfolder. Check the allowed evidence folder structure."));
+                    }
+                    return detectFileType(filePart);
+                })
                 .flatMap(fileType ->
                         assertCanUpload(organisationId, email)
                                 .flatMap(user ->
