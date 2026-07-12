@@ -47,6 +47,12 @@ public class Transaction implements Persistable<String> {
     @Column("counterparty")
     private String counterparty;
 
+    @Column("donor")
+    private String donor;
+
+    @Column("budget_line")
+    private String budgetLine;
+
     @Column("amount")
     private BigDecimal amount;
 

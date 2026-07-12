@@ -23,6 +23,7 @@ import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -31,6 +32,7 @@ class TransactionServiceTest {
     @Mock private TransactionRepository txnRepo;
     @Mock private EvidenceRepository evidenceRepo;
     @Mock private ReviewQueueRepository reviewRepo;
+    @Mock private OrganisationRepository organisationRepo;
     @Mock private OrganisationMemberRepository memberRepo;
     @Mock private UserRepository userRepo;
     @Mock private NotificationService notificationService;
@@ -41,8 +43,10 @@ class TransactionServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new TransactionService(txnRepo, evidenceRepo, reviewRepo, memberRepo, userRepo,
-                notificationService);
+        service = new TransactionService(txnRepo, evidenceRepo, reviewRepo, organisationRepo, memberRepo,
+                userRepo, notificationService);
+        lenient().when(organisationRepo.findById(ORG_ID))
+                .thenReturn(Mono.just(organisation(ORG_ID, OrganisationType.PRIVATE)));
     }
 
     // ──────────────────────────── createTransaction ───────────────────────────
@@ -97,6 +101,60 @@ class TransactionServiceTest {
         StepVerifier.create(service.createTransaction("stranger@test.com", createRequest()))
                 .expectErrorMatches(e -> e instanceof ForbiddenException
                         && e.getMessage().contains("not a member"))
+                .verify();
+    }
+
+    @Test
+    void createTransaction_ngoOrg_missingDonorAndBudgetLine_returnsError() {
+        when(organisationRepo.findById(ORG_ID)).thenReturn(Mono.just(organisation(ORG_ID, OrganisationType.NGO)));
+        mockActiveMember("client@test.com", 1L, Role.CLIENT);
+
+        StepVerifier.create(service.createTransaction("client@test.com", createRequest()))
+                .expectErrorMatches(e -> e instanceof InvalidRecord
+                        && e.getMessage().contains("Donor and budget line are required"))
+                .verify();
+    }
+
+    @Test
+    void createTransaction_ngoOrg_withDonorAndBudgetLine_succeeds() {
+        when(organisationRepo.findById(ORG_ID)).thenReturn(Mono.just(organisation(ORG_ID, OrganisationType.NGO)));
+        mockActiveMember("client@test.com", 1L, Role.CLIENT);
+        when(txnRepo.countByOrganisationId(ORG_ID)).thenReturn(Mono.just(0L));
+        when(txnRepo.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
+        when(notificationService.notifyTransactionCreated(any(), anyString(), anyString(), anyString()))
+                .thenReturn(Mono.empty());
+
+        CreateTransactionRequest req = createRequest();
+        req.setDonor("UNICEF");
+        req.setBudgetLine("Education Programme");
+
+        StepVerifier.create(service.createTransaction("client@test.com", req))
+                .expectNextMatches(r -> r.getDonor().equals("UNICEF")
+                        && r.getBudgetLine().equals("Education Programme"))
+                .verifyComplete();
+    }
+
+    @Test
+    void createTransaction_privateOrg_donorAndBudgetLineNotRequired_succeeds() {
+        mockActiveMember("client@test.com", 1L, Role.CLIENT);
+        when(txnRepo.countByOrganisationId(ORG_ID)).thenReturn(Mono.just(0L));
+        when(txnRepo.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
+        when(notificationService.notifyTransactionCreated(any(), anyString(), anyString(), anyString()))
+                .thenReturn(Mono.empty());
+
+        StepVerifier.create(service.createTransaction("client@test.com", createRequest()))
+                .expectNextMatches(r -> r.getDonor() == null && r.getBudgetLine() == null)
+                .verifyComplete();
+    }
+
+    @Test
+    void createTransaction_organisationNotFound_returnsError() {
+        when(organisationRepo.findById(ORG_ID)).thenReturn(Mono.empty());
+        mockActiveMember("client@test.com", 1L, Role.CLIENT);
+
+        StepVerifier.create(service.createTransaction("client@test.com", createRequest()))
+                .expectErrorMatches(e -> e instanceof InvalidRecord
+                        && e.getMessage().equals("Organisation not found"))
                 .verify();
     }
 
@@ -265,6 +323,13 @@ class TransactionServiceTest {
         m.setRole(role);
         m.setStatus(MemberStatus.ACTIVE);
         return m;
+    }
+
+    private Organisation organisation(UUID id, OrganisationType type) {
+        Organisation org = new Organisation();
+        org.setId(id);
+        org.setIndustry(type);
+        return org;
     }
 
     private Transaction txn(String id) {

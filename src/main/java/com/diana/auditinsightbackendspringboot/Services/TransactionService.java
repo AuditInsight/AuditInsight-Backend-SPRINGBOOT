@@ -19,6 +19,7 @@ public class TransactionService {
     private final TransactionRepository txnRepo;
     private final EvidenceRepository evidenceRepo;
     private final ReviewQueueRepository reviewRepo;
+    private final OrganisationRepository organisationRepo;
     private final OrganisationMemberRepository memberRepo;
     private final UserRepository userRepo;
     private final NotificationService notificationService;
@@ -26,12 +27,14 @@ public class TransactionService {
     public TransactionService(TransactionRepository txnRepo,
                               EvidenceRepository evidenceRepo,
                               ReviewQueueRepository reviewRepo,
+                              OrganisationRepository organisationRepo,
                               OrganisationMemberRepository memberRepo,
                               UserRepository userRepo,
                               NotificationService notificationService) {
         this.txnRepo = txnRepo;
         this.evidenceRepo = evidenceRepo;
         this.reviewRepo = reviewRepo;
+        this.organisationRepo = organisationRepo;
         this.memberRepo = memberRepo;
         this.userRepo = userRepo;
         this.notificationService = notificationService;
@@ -64,6 +67,9 @@ public class TransactionService {
         r.setOrganisationId(t.getOrganisationId());
         r.setName(t.getName());
         r.setDate(t.getDate());
+        r.setCounterparty(t.getCounterparty());
+        r.setDonor(t.getDonor());
+        r.setBudgetLine(t.getBudgetLine());
         r.setAmount(t.getAmount());
         r.setType(t.getType());
         r.setPaymentMethod(t.getPaymentMethod());
@@ -81,13 +87,31 @@ public class TransactionService {
     }
 
 
+    private static boolean isBlank(String s) {
+        return s == null || s.isBlank();
+    }
+
+
     public Mono<TransactionResponse> createTransaction(String email, CreateTransactionRequest req) {
-        return resolveContext(req.getOrganisationId(), email)
-                .flatMap(ctx -> {
+        return Mono.zip(
+                        resolveContext(req.getOrganisationId(), email),
+                        organisationRepo.findById(req.getOrganisationId())
+                                .switchIfEmpty(Mono.error(new InvalidRecord("Organisation not found"))))
+                .flatMap(tuple -> {
+                    OrgMemberContext ctx = tuple.getT1();
+                    Organisation org = tuple.getT2();
+
                     if (ctx.role() == Role.AUDITOR) {
                         return Mono.error(new ForbiddenException(
                                 "Permission denied. Auditors cannot create transactions."));
                     }
+
+                    if (org.getIndustry() == OrganisationType.NGO
+                            && (isBlank(req.getDonor()) || isBlank(req.getBudgetLine()))) {
+                        return Mono.error(new InvalidRecord(
+                                "Donor and budget line are required for NGO transactions."));
+                    }
+
                     return generateTxnId(req.getOrganisationId())
                             .flatMap(txnId -> {
                                 Transaction t = new Transaction();
@@ -98,6 +122,8 @@ public class TransactionService {
                                 t.setAmount(req.getAmount());
                                 t.setType(req.getType());
                                 t.setCounterparty(req.getCounterparty());
+                                t.setDonor(req.getDonor());
+                                t.setBudgetLine(req.getBudgetLine());
                                 t.setPaymentMethod(req.getPaymentMethod());
                                 t.setStatus(TransactionStatus.PENDING);
                                 t.setEvidenceStatus(EvidenceStatus.MISSING);
