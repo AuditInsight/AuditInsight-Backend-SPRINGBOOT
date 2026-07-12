@@ -19,7 +19,7 @@ public class CreateTransactionRequest {
     @NotNull(message = "Organisation ID is required")
     private UUID organisationId;
 
-    @NotBlank(message = "Transaction name is required")
+    @NotBlank(message = "Transaction(project) name is required")
     private String name;
 
     @NotNull(message = "Transaction date is required")
@@ -37,4 +37,8 @@ public class CreateTransactionRequest {
 
     @NotBlank(message = "the counterparty is needed")
     private String counterparty;
+
+    private String donor;
+
+    private String budgetLine;
 }

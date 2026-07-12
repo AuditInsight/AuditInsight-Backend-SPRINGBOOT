@@ -31,7 +31,7 @@ public class TransactionController {
 
     @PostMapping
     @Operation(summary = "Create transaction",
-               description = "Creates a new transaction. CLIENT and MEMBER only.")
+               description = "Creates a new transaction. CLIENT and MEMBER only. when creating this transaction the NGOs is mandatory to provide the donor and the Budget line  as for the PRIVATE , don't include those two attribute in JSON")
     public Mono<ResponseEntity<TransactionResponse>> create(
             Authentication auth,
             @Valid @RequestBody CreateTransactionRequest req) {

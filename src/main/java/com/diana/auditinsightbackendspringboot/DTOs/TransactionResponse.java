@@ -22,6 +22,9 @@ public class TransactionResponse {
     private UUID organisationId;
     private String name;
     private LocalDate date;
+    private String counterparty;
+    private String donor;
+    private String budgetLine;
     private BigDecimal amount;
     private TransactionType type;
     private PaymentMethod paymentMethod;
