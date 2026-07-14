@@ -30,7 +30,7 @@ public class AuthController {
     @Operation(
             summary = "Register new account" ,
             description = "all users (CLIENT/AUDITOR) are going to register by choosing their role and provide other required informations. " +
-                    "for the CLIENT they are going to receive the OTP on their registered email , while the AUDITORS they are going to wait for the admin to approve their accounts"
+                    "both CLIENT and AUDITOR accounts receive an OTP on their registered email that must be verified before they can log in"
     )
     public Mono<ResponseEntity<ResponseMessage>> signup(@Valid @RequestBody UserRegister request) {
         return authService.registerUser(request)
@@ -50,7 +50,7 @@ public class AuthController {
     @PostMapping("/verify-otp")
     @Operation(
             summary = "Verify OTP" ,
-            description = " the OTP sent on your registered email , you need to verify first so that your account got to be activated. Note: this applies only on the CLIENT users"
+            description = " the OTP sent on your registered email , you need to verify first so that your account got to be activated. Applies to CLIENT and AUDITOR users"
     )
     public Mono<ResponseEntity<ResponseMessage>> verifyOtp(@Valid @RequestBody OtpRequest otpRequest) {
         return authService.verifyOtp(otpRequest)
@@ -80,6 +80,27 @@ public class AuthController {
             ChangePasswordRequest request) {
         return authService.changePassword(authentication.getName(), request)
                 .map(response -> new ResponseEntity<>(response, HttpStatus.OK));
+    }
+
+    @PostMapping("/forgot-password")
+    @Operation(
+            summary = "Request a password reset code",
+            description = "Sends a one-time reset code to the account's email if it exists. Works even for accounts " +
+                    "deactivated by an administrator, since it is their only way to regain the ability to change their password."
+    )
+    public Mono<ResponseEntity<ResponseMessage>> forgotPassword(@Valid @RequestBody ForgotPasswordRequest request) {
+        return authService.forgotPassword(request.getEmail())
+                .map(response -> new ResponseEntity<>(response, response.getStatus()));
+    }
+
+    @PostMapping("/reset-password")
+    @Operation(
+            summary = "Reset password using the OTP from forgot-password",
+            description = "Sets a new password after verifying the reset code sent to the account's email."
+    )
+    public Mono<ResponseEntity<ResponseMessage>> resetPassword(@Valid @RequestBody ResetPasswordRequest request) {
+        return authService.resetPassword(request)
+                .map(response -> new ResponseEntity<>(response, response.getStatus()));
     }
 
     @GetMapping("/social-login/{provider}")

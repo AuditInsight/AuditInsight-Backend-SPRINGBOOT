@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS users (
     role                 VARCHAR(50)  NOT NULL,
     auth_provider        VARCHAR(50),
     verified             BOOLEAN      NOT NULL DEFAULT FALSE,
+    active               BOOLEAN      NOT NULL DEFAULT TRUE,
     must_change_password BOOLEAN      NOT NULL DEFAULT FALSE,
     created_at           TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
 );

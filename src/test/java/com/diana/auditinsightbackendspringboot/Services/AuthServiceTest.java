@@ -108,7 +108,7 @@ class AuthServiceTest {
     }
 
     @Test
-    void registerUser_newAuditor_returns201AndSendsConfirmation() {
+    void registerUser_newAuditor_returns201AndSendsOtp() {
         when(userRepository.existsByUsername("bob@test.com")).thenReturn(Mono.just(false));
 
         User saved = user("bob@test.com", Role.AUDITOR);
@@ -118,9 +118,16 @@ class AuthServiceTest {
         AuditorProfile savedProfile = new AuditorProfile();
         when(auditorRepository.save(any())).thenReturn(Mono.just(savedProfile));
 
+        when(otpRepository.deleteByEmail("bob@test.com")).thenReturn(Mono.empty());
+        OtpVerification otp = new OtpVerification();
+        otp.setOtp("123456");
+        otp.setEmail("bob@test.com");
+        otp.setExpiry(LocalDateTime.now().plusMinutes(10));
+        when(otpRepository.save(any())).thenReturn(Mono.just(otp));
+
         StepVerifier.create(authService.registerUser(auditorRegisterRequest("bob@test.com")))
                 .expectNextMatches(r -> r.getStatus() == HttpStatus.CREATED
-                        && r.getMessage().contains("confirmation"))
+                        && r.getMessage().contains("OTP"))
                 .verifyComplete();
     }
 
@@ -321,8 +328,12 @@ class AuthServiceTest {
     void login_unverifiedAuditor_emitsInvalidRecord() {
         User u = user("bob@test.com", Role.AUDITOR);
         u.setPassword(encoder.encode("Password1@"));
-        u.setVerified(false);
         when(userRepository.findByUsername("bob@test.com")).thenReturn(Mono.just(u));
+
+        OtpVerification otp = new OtpVerification();
+        otp.setVerified(false);
+        otp.setExpiry(LocalDateTime.now().plusMinutes(5));
+        when(otpRepository.findByEmail("bob@test.com")).thenReturn(Mono.just(otp));
 
         LoginRequest req = new LoginRequest();
         req.setUsername("bob@test.com");
@@ -330,7 +341,24 @@ class AuthServiceTest {
 
         StepVerifier.create(authService.login(req))
                 .expectErrorMatches(e -> e instanceof InvalidRecord
-                        && e.getMessage().contains("admin approval"))
+                        && e.getMessage().contains("not active"))
+                .verify();
+    }
+
+    @Test
+    void login_deactivatedAccount_emitsInvalidRecord() {
+        User u = user("alice@test.com", Role.CLIENT);
+        u.setPassword(encoder.encode("Password1@"));
+        u.setActive(false);
+        when(userRepository.findByUsername("alice@test.com")).thenReturn(Mono.just(u));
+
+        LoginRequest req = new LoginRequest();
+        req.setUsername("alice@test.com");
+        req.setPassword("Password1@");
+
+        StepVerifier.create(authService.login(req))
+                .expectErrorMatches(e -> e instanceof InvalidRecord
+                        && e.getMessage().contains("deactivated"))
                 .verify();
     }
 
@@ -352,11 +380,14 @@ class AuthServiceTest {
     }
 
     @Test
-    void login_approvedAuditor_returnsToken() {
+    void login_verifiedAuditor_returnsToken() {
         User u = user("bob@test.com", Role.AUDITOR);
         u.setPassword(encoder.encode("Password1@"));
-        u.setVerified(true);
         when(userRepository.findByUsername("bob@test.com")).thenReturn(Mono.just(u));
+
+        OtpVerification otp = new OtpVerification();
+        otp.setVerified(true);
+        when(otpRepository.findByEmail("bob@test.com")).thenReturn(Mono.just(otp));
         when(jwtUtil.generateToken(anyString(), anyString())).thenReturn("auditor.jwt.token");
 
         LoginRequest req = new LoginRequest();
@@ -496,13 +527,146 @@ class AuthServiceTest {
     }
 
     @Test
-    void resendOtp_auditorAccount_emitsInvalidRecord() {
+    void resendOtp_unverifiedAuditor_sendsNewOtpAndReturns200() {
         User auditor = user("bob@test.com", Role.AUDITOR);
         when(userRepository.findByUsername("bob@test.com")).thenReturn(Mono.just(auditor));
 
+        OtpVerification existing = new OtpVerification();
+        existing.setVerified(false);
+        existing.setExpiry(LocalDateTime.now().minusMinutes(1));
+        when(otpRepository.findByEmail("bob@test.com")).thenReturn(Mono.just(existing));
+
+        when(otpRepository.deleteByEmail("bob@test.com")).thenReturn(Mono.empty());
+        OtpVerification newOtp = new OtpVerification();
+        newOtp.setOtp("654321");
+        newOtp.setEmail("bob@test.com");
+        newOtp.setExpiry(LocalDateTime.now().plusMinutes(10));
+        when(otpRepository.save(any())).thenReturn(Mono.just(newOtp));
+
         StepVerifier.create(authService.resendOtp("bob@test.com"))
+                .expectNextMatches(r -> r.getStatus() == HttpStatus.OK
+                        && r.getMessage().contains("new OTP"))
+                .verifyComplete();
+    }
+
+    @Test
+    void resendOtp_adminAccount_emitsInvalidRecord() {
+        User admin = user("admin@test.com", Role.ADMIN);
+        when(userRepository.findByUsername("admin@test.com")).thenReturn(Mono.just(admin));
+
+        StepVerifier.create(authService.resendOtp("admin@test.com"))
                 .expectErrorMatches(e -> e instanceof InvalidRecord
-                        && e.getMessage().contains("only required for client"))
+                        && e.getMessage().contains("only required for client and auditor"))
+                .verify();
+    }
+
+    // ──────────────────────────── forgotPassword ────────────────────────────
+
+    @Test
+    void forgotPassword_deactivatedAccount_stillSendsResetOtp() {
+        User u = user("alice@test.com", Role.CLIENT);
+        u.setActive(false);
+        when(userRepository.findByUsername("alice@test.com")).thenReturn(Mono.just(u));
+
+        when(otpRepository.deleteByEmail("alice@test.com")).thenReturn(Mono.empty());
+        OtpVerification otp = new OtpVerification();
+        otp.setOtp("123456");
+        otp.setEmail("alice@test.com");
+        otp.setExpiry(LocalDateTime.now().plusMinutes(10));
+        when(otpRepository.save(any())).thenReturn(Mono.just(otp));
+
+        StepVerifier.create(authService.forgotPassword("alice@test.com"))
+                .expectNextMatches(r -> r.getStatus() == HttpStatus.OK
+                        && r.getMessage().contains("reset code has been sent"))
+                .verifyComplete();
+    }
+
+    @Test
+    void forgotPassword_unknownEmail_returnsGenericSuccessMessage() {
+        when(userRepository.findByUsername("nobody@test.com")).thenReturn(Mono.empty());
+
+        StepVerifier.create(authService.forgotPassword("nobody@test.com"))
+                .expectNextMatches(r -> r.getStatus() == HttpStatus.OK
+                        && r.getMessage().contains("reset code has been sent"))
+                .verifyComplete();
+    }
+
+    // ──────────────────────────── resetPassword ────────────────────────────
+
+    @Test
+    void resetPassword_validOtp_updatesPasswordAndReturnsSuccess() {
+        OtpVerification otp = new OtpVerification();
+        otp.setEmail("alice@test.com");
+        otp.setOtp("123456");
+        otp.setVerified(false);
+        otp.setExpiry(LocalDateTime.now().plusMinutes(5));
+        when(otpRepository.findByEmailAndOtp("alice@test.com", "123456")).thenReturn(Mono.just(otp));
+        when(otpRepository.save(any())).thenReturn(Mono.just(otp));
+
+        User u = user("alice@test.com", Role.CLIENT);
+        u.setActive(false);
+        when(userRepository.findByUsername("alice@test.com")).thenReturn(Mono.just(u));
+        when(userRepository.save(any())).thenReturn(Mono.just(u));
+
+        ResetPasswordRequest req = new ResetPasswordRequest();
+        req.setEmail("alice@test.com");
+        req.setOtp("123456");
+        req.setNewPassword("NewPassword1@");
+
+        StepVerifier.create(authService.resetPassword(req))
+                .expectNextMatches(r -> r.getStatus() == HttpStatus.OK
+                        && r.getMessage().contains("Password reset successfully"))
+                .verifyComplete();
+    }
+
+    @Test
+    void resetPassword_invalidOtp_emitsInvalidRecord() {
+        when(otpRepository.findByEmailAndOtp("alice@test.com", "000000")).thenReturn(Mono.empty());
+
+        ResetPasswordRequest req = new ResetPasswordRequest();
+        req.setEmail("alice@test.com");
+        req.setOtp("000000");
+        req.setNewPassword("NewPassword1@");
+
+        StepVerifier.create(authService.resetPassword(req))
+                .expectErrorMatches(e -> e instanceof InvalidRecord
+                        && e.getMessage().contains("Invalid OTP"))
+                .verify();
+    }
+
+    @Test
+    void resetPassword_expiredOtp_emitsInvalidRecord() {
+        OtpVerification otp = new OtpVerification();
+        otp.setVerified(false);
+        otp.setExpiry(LocalDateTime.now().minusMinutes(1));
+        when(otpRepository.findByEmailAndOtp("alice@test.com", "123456")).thenReturn(Mono.just(otp));
+
+        ResetPasswordRequest req = new ResetPasswordRequest();
+        req.setEmail("alice@test.com");
+        req.setOtp("123456");
+        req.setNewPassword("NewPassword1@");
+
+        StepVerifier.create(authService.resetPassword(req))
+                .expectErrorMatches(e -> e instanceof InvalidRecord
+                        && e.getMessage().contains("expired"))
+                .verify();
+    }
+
+    @Test
+    void resetPassword_alreadyUsedOtp_emitsInvalidRecord() {
+        OtpVerification otp = new OtpVerification();
+        otp.setVerified(true);
+        otp.setExpiry(LocalDateTime.now().plusMinutes(5));
+        when(otpRepository.findByEmailAndOtp("alice@test.com", "123456")).thenReturn(Mono.just(otp));
+
+        ResetPasswordRequest req = new ResetPasswordRequest();
+        req.setEmail("alice@test.com");
+        req.setOtp("123456");
+        req.setNewPassword("NewPassword1@");
+
+        StepVerifier.create(authService.resetPassword(req))
+                .expectErrorMatches(e -> e instanceof InvalidRecord
+                        && e.getMessage().contains("already been used"))
                 .verify();
     }
 
