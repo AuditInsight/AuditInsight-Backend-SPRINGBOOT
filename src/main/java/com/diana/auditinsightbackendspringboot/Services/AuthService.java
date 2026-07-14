@@ -87,17 +87,18 @@ public class AuthService {
                                     );
                         } else if (savedUser.getRole() == Role.AUDITOR) {
                             AuditorProfile auditorProfile = new AuditorProfile();
-                            auditorProfile.setFirstName(request.getFirstName());
-                            auditorProfile.setLastName(request.getLastName());
+                            auditorProfile.setFirstName(request.getFirstName().trim());
+                            auditorProfile.setLastName(request.getLastName().trim());
                             auditorProfile.setEmailAddress(request.getUsername());
 
                             return auditorRepository.save(auditorProfile)
-                                    .flatMap(savedProfile ->
-                                            Mono.fromRunnable(() -> emailService.sendConfirmationEmail(
-                                                            savedProfile.getEmailAddress(), savedProfile.getFirstName()))
+                                    .then(generateOtp(savedUser.getUsername()))
+                                    .flatMap(otp ->
+                                            Mono.fromRunnable(() -> emailService.sendVerificationEmail(
+                                                            auditorProfile.getEmailAddress(), auditorProfile.getFirstName(), otp))
                                                     .subscribeOn(Schedulers.boundedElastic())
                                                     .thenReturn(new ResponseMessage(HttpStatus.CREATED,
-                                                            "Successfully created an account. Check your email address for confirmation."))
+                                                            "Successfully created an account. An OTP has been sent to your registered email."))
                                     );
                         }
                         return Mono.just(new ResponseMessage(HttpStatus.BAD_REQUEST, "Provided role is not supported"));
@@ -110,6 +111,7 @@ public class AuthService {
                 .switchIfEmpty(Mono.error(new InvalidRecord("Username not found")))
                 .flatMap(this::validateAuthProvider)
                 .flatMap(user -> validatePassword(user, request.getPassword()))
+                .flatMap(this::validateAccountActive)
                 .flatMap(this::validateRoleAccess)
                 .flatMap(user -> processInviteToken(user, request.getInviteToken()))
                 .flatMap(this::generateTokenResponse);
@@ -205,9 +207,17 @@ public class AuthService {
         return Mono.just(user);
     }
 
+    private Mono<User> validateAccountActive(User user) {
+        if (!user.isActive()) {
+            return Mono.error(new InvalidRecord("Your account has been deactivated by an administrator."));
+        }
+        return Mono.just(user);
+    }
+
     private Mono<User> validateRoleAccess(User user) {
         return switch (user.getRole()) {
-            case CLIENT -> otpVerificationRepository.findByEmail(user.getUsername())
+            // CLIENT and AUDITOR both self-verify via OTP before their account can log in.
+            case CLIENT, AUDITOR -> otpVerificationRepository.findByEmail(user.getUsername())
                     .switchIfEmpty(Mono.error(new InvalidRecord(
                             "Your account is not active. Please verify your email using the OTP.")))
                     .flatMap(otp -> {
@@ -218,9 +228,6 @@ public class AuthService {
                         return Mono.error(new InvalidRecord(
                                 "Your account is not active. Please verify your email using the OTP."));
                     });
-            case AUDITOR -> user.isVerified()
-                    ? Mono.just(user)
-                    : Mono.error(new InvalidRecord("Your account is waiting for admin approval."));
             case ADMIN -> Mono.just(user);
             // MEMBER accounts are created by invitation with verified=true — no extra check needed.
             case MEMBER -> Mono.just(user);
@@ -276,8 +283,9 @@ public class AuthService {
         return repo.findByUsername(email)
                 .switchIfEmpty(Mono.error(new InvalidRecord("No account found for this email.")))
                 .flatMap(user -> {
-                    if (user.getRole() != Role.CLIENT) {
-                        return Mono.error(new InvalidRecord("OTP verification is only required for client accounts."));
+                    if (user.getRole() != Role.CLIENT && user.getRole() != Role.AUDITOR) {
+                        return Mono.error(new InvalidRecord(
+                                "OTP verification is only required for client and auditor accounts."));
                     }
                     return otpVerificationRepository.findByEmail(email)
                             .flatMap(otp -> {
@@ -302,6 +310,53 @@ public class AuthService {
                                                             .thenReturn(new ResponseMessage(HttpStatus.OK,
                                                                     "A new OTP has been sent to your email."))
                                             ))
+                            );
+                });
+    }
+
+    public Mono<ResponseMessage> forgotPassword(String email) {
+        ResponseMessage genericResponse = new ResponseMessage(HttpStatus.OK,
+                "If an account exists for this email, a password reset code has been sent.");
+
+        return repo.findByUsername(email)
+                .flatMap(user -> generateOtp(email)
+                        .flatMap(otp ->
+                                Mono.fromRunnable(() -> emailService
+
+                                                .sendPasswordResetEmail(
+                                                email, user.getFullName(), otp))
+                                        .subscribeOn(Schedulers.boundedElastic())
+                                        .thenReturn(genericResponse)
+                        ))
+                .defaultIfEmpty(genericResponse);
+    }
+
+    public Mono<ResponseMessage> resetPassword(ResetPasswordRequest request) {
+        return otpVerificationRepository.findByEmailAndOtp(request.getEmail(), request.getOtp())
+                .switchIfEmpty(Mono.error(new InvalidRecord("Invalid OTP or email.")))
+                .flatMap(otp -> {
+                    if (otp.isVerified()) {
+                        return Mono.error(new InvalidRecord("This OTP has already been used."));
+                    }
+                    if (otp.getExpiry().isBefore(LocalDateTime.now())) {
+                        return Mono.error(new InvalidRecord("OTP expired. Please request a new one."));
+                    }
+
+                    otp.setVerified(true);
+                    return otpVerificationRepository.save(otp)
+                            .then(repo.findByUsername(request.getEmail()))
+                            .switchIfEmpty(Mono.error(new InvalidRecord("User not found")))
+                            .flatMap(user -> {
+                                user.setPassword(encoder.encode(request.getNewPassword()));
+                                user.setMustChangePassword(false);
+                                return repo.save(user);
+                            })
+                            .flatMap(user ->
+                                    Mono.fromRunnable(() -> emailService.sendPasswordChangedEmail(
+                                                    user.getUsername(), user.getFullName()))
+                                            .subscribeOn(Schedulers.boundedElastic())
+                                            .thenReturn(new ResponseMessage(HttpStatus.OK,
+                                                    "Password reset successfully. You can now log in with your new password."))
                             );
                 });
     }

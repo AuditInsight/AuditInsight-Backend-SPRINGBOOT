@@ -81,9 +81,9 @@ public class EmailService {
         sendEmail(email, "Your OTP for AuditInsight Account Verification", html);
     }
 
-    public void sendApprovalEmail(String email, String name) {
+    public void sendAccountActivatedEmail(String email, String name) {
         if (email == null || name == null) {
-            log.error("Cannot send approval email: missing email or name");
+            log.error("Cannot send account activated email: missing email or name");
             return;
         }
 
@@ -91,14 +91,32 @@ public class EmailService {
                 <html>
                   <body style='font-family: Arial, sans-serif;'>
                       <p>Hello <b>%s</b>,</p>
-                      <p>Great news! Your <b>AuditInsight</b> auditor account has been reviewed and approved.</p>
-                      <p>You can now log in and start working on auditing engagements.</p>
+                      <p>Your <b>AuditInsight</b> account has been activated by an administrator.</p>
+                      <p>You can now log in and use the platform.</p>
                       <br>
                       <p>Welcome aboard!</p>
                   </body>
                 </html>""", name);
 
-        sendEmail(email, "Your AuditInsight Account Has Been Approved", html);
+        sendEmail(email, "Your AuditInsight Account Has Been Activated", html);
+    }
+
+    public void sendAccountDeactivatedEmail(String email, String name) {
+        if (email == null || name == null) {
+            log.error("Cannot send account deactivated email: missing email or name");
+            return;
+        }
+
+        String html = String.format("""
+                <html>
+                  <body style='font-family: Arial, sans-serif;'>
+                      <p>Hello <b>%s</b>,</p>
+                      <p>Your <b>AuditInsight</b> account has been deactivated by an administrator.</p>
+                      <p>If you believe this is a mistake, please contact your organisation administrator.</p>
+                  </body>
+                </html>""", name);
+
+        sendEmail(email, "Your AuditInsight Account Has Been Deactivated", html);
     }
 
     public void sendInvitationEmail(String email, String orgName, String token) {
@@ -336,6 +354,31 @@ public class EmailService {
         sendEmail(email, "Issue Resolved for Transaction " + txnId, html);
     }
 
+    public void sendPasswordResetEmail(String email, String name, String otp) {
+        if (email == null) {
+            log.error("Cannot send password reset email: missing email");
+            return;
+        }
+
+        String html = String.format("""
+                <html>
+                <body style='font-family: Arial, sans-serif;'>
+                    <div style='max-width:600px;margin:auto;padding:20px;border:1px solid #ddd;'>
+                        <h2 style='color:#e74c3c;'>Password Reset Request</h2>
+                        <p>Hello <strong>%s</strong>,</p>
+                        <p>We received a request to reset your AuditInsight account password. Use the code below to continue:</p>
+                        <div style='text-align:center;margin:20px;'>
+                            <span style='font-size:2em;letter-spacing:8px;background:#f4f4f4;padding:10px 20px;border-radius:5px;border:1px solid #ccc;'>%s</span>
+                        </div>
+                        <p>Enter this code in the app to set a new password. This code expires in 10 minutes.</p>
+                        <small>If you did not request this, please ignore this email.</small>
+                    </div>
+                </body>
+                </html>""", name != null ? name : email, otp);
+
+        sendEmail(email, "Your AuditInsight password reset code", html);
+    }
+
     public void sendPasswordChangeReminderEmail(String email, String name) {
         if (email == null) {
             log.error("Cannot send password change reminder: missing email");
@@ -357,22 +400,4 @@ public class EmailService {
         sendEmail(email, "Action Required: Change your AuditInsight password", html);
     }
 
-    public void sendConfirmationEmail(String email, String name) {
-        if (email == null || name == null) {
-            log.error("Cannot send confirmation email: missing email or name");
-            return;
-        }
-
-        String html = String.format("""
-                <html>
-                  <body>
-                      <p>It is a pleasure to have you working with <b>AuditInsight</b>, <b>%s</b>.</p>
-                      <p>AuditInsight will now help you get accurate, fast and transparent audit results.</p>
-                      <br>
-                      <p>Your account is currently under review. You will be notified once approved so that you can start publishing job vacancies!</p>
-                  </body>
-                </html>""", name);
-
-        sendEmail(email, "Account Under Review", html);
-    }
 }

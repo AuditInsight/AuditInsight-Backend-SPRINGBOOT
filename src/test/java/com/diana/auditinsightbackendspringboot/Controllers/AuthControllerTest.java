@@ -86,7 +86,7 @@ class AuthControllerTest {
     void signup_validAuditorRequest_returns201() {
         when(authService.registerUser(any())).thenReturn(
                 Mono.just(new ResponseMessage(HttpStatus.CREATED,
-                        "Successfully created an account. Check your email address for confirmation.")));
+                        "Successfully created an account. An OTP has been sent to your registered email.")));
 
         webTestClient.post().uri("/api/auth/sign-up")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -257,5 +257,68 @@ class AuthControllerTest {
                 .expectStatus().isBadRequest()
                 .expectBody()
                 .jsonPath("$.error").isEqualTo("No account found for this email.");
+    }
+
+    // ──────────────────────────── /forgot-password ────────────────────────────
+
+    @Test
+    void forgotPassword_knownEmail_returns200() {
+        when(authService.forgotPassword(anyString())).thenReturn(
+                Mono.just(new ResponseMessage(HttpStatus.OK,
+                        "If an account exists for this email, a password reset code has been sent.")));
+
+        webTestClient.post().uri("/api/auth/forgot-password")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {
+                          "email": "alice@example.com"
+                        }""")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.message").isEqualTo(
+                        "If an account exists for this email, a password reset code has been sent.");
+    }
+
+    // ──────────────────────────── /reset-password ────────────────────────────
+
+    @Test
+    void resetPassword_validOtp_returns200() {
+        when(authService.resetPassword(any())).thenReturn(
+                Mono.just(new ResponseMessage(HttpStatus.OK,
+                        "Password reset successfully. You can now log in with your new password.")));
+
+        webTestClient.post().uri("/api/auth/reset-password")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {
+                          "email": "alice@example.com",
+                          "otp": "123456",
+                          "newPassword": "NewPassword1@"
+                        }""")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.message").isEqualTo(
+                        "Password reset successfully. You can now log in with your new password.");
+    }
+
+    @Test
+    void resetPassword_expiredOtp_returns400() {
+        when(authService.resetPassword(any())).thenReturn(
+                Mono.error(new InvalidRecord("OTP expired. Please request a new one.")));
+
+        webTestClient.post().uri("/api/auth/reset-password")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {
+                          "email": "alice@example.com",
+                          "otp": "123456",
+                          "newPassword": "NewPassword1@"
+                        }""")
+                .exchange()
+                .expectStatus().isBadRequest()
+                .expectBody()
+                .jsonPath("$.error").isEqualTo("OTP expired. Please request a new one.");
     }
 }

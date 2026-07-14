@@ -34,6 +34,8 @@ public class User {
 
     private boolean verified = false;
 
+    private boolean active = true;
+
     @Column("must_change_password")
     private boolean mustChangePassword = false;
 
