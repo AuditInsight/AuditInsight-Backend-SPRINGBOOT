@@ -237,6 +237,99 @@ class AuthServiceTest {
     }
 
     @Test
+    void login_invitedAuditor_withValidToken_activatesMembershipAndReturnsMustChangePassword() {
+        UUID orgId = UUID.randomUUID();
+        String token = "valid-invite-token";
+
+        // Org-invited AUDITOR: verified=true, mustChangePassword=true, no OtpVerification row at all.
+        User u = user("newauditor@test.com", Role.AUDITOR);
+        u.setPassword(encoder.encode("TempPass1@"));
+        u.setVerified(true);
+        u.setMustChangePassword(true);
+        when(userRepository.findByUsername("newauditor@test.com")).thenReturn(Mono.just(u));
+
+        OrganisationInvitation inv = invitation(orgId, "newauditor@test.com", token, InvitationStatus.PENDING,
+                LocalDateTime.now().plusHours(48));
+        when(invitationRepository.findByToken(token)).thenReturn(Mono.just(inv));
+        when(invitationRepository.save(any())).thenReturn(Mono.just(inv));
+
+        OrganisationMember member = new OrganisationMember();
+        member.setStatus(MemberStatus.PENDING);
+        when(memberRepository.findByOrganisationIdAndUserId(orgId, null)).thenReturn(Mono.just(member));
+        when(memberRepository.save(any())).thenReturn(Mono.just(member));
+
+        when(jwtUtil.generateToken(anyString(), anyString())).thenReturn("auditor-invite.jwt.token");
+
+        LoginRequest req = new LoginRequest();
+        req.setUsername("newauditor@test.com");
+        req.setPassword("TempPass1@");
+        req.setInviteToken(token);
+
+        StepVerifier.create(authService.login(req))
+                .expectNextMatches(r -> r.getToken().equals("auditor-invite.jwt.token")
+                        && r.getRole() == Role.AUDITOR
+                        && r.isMustChangePassword())
+                .verifyComplete();
+    }
+
+    @Test
+    void login_invitedAuditor_withoutToken_returnsError() {
+        User u = user("newauditor@test.com", Role.AUDITOR);
+        u.setPassword(encoder.encode("TempPass1@"));
+        u.setVerified(true);
+        u.setMustChangePassword(true);
+        when(userRepository.findByUsername("newauditor@test.com")).thenReturn(Mono.just(u));
+
+        LoginRequest req = new LoginRequest();
+        req.setUsername("newauditor@test.com");
+        req.setPassword("TempPass1@");
+        // no inviteToken, and no OtpVerification stub — proves validateRoleAccess doesn't
+        // fail on "verify using OTP" and instead reaches processInviteToken.
+
+        StepVerifier.create(authService.login(req))
+                .expectErrorMatches(e -> e instanceof InvalidRecord
+                        && e.getMessage().contains("invitation token is required"))
+                .verify();
+    }
+
+    @Test
+    void login_existingAuditorInvitedToOrg_noForcedPasswordChange() {
+        UUID orgId = UUID.randomUUID();
+        String token = "valid-invite-token";
+
+        // Already-registered, already-verified AUDITOR being invited into a new org — no temp
+        // password was issued, so mustChangePassword stays false.
+        User u = user("existingauditor@test.com", Role.AUDITOR);
+        u.setPassword(encoder.encode("OwnPassword1@"));
+        u.setVerified(true);
+        u.setMustChangePassword(false);
+        when(userRepository.findByUsername("existingauditor@test.com")).thenReturn(Mono.just(u));
+
+        OrganisationInvitation inv = invitation(orgId, "existingauditor@test.com", token, InvitationStatus.PENDING,
+                LocalDateTime.now().plusHours(48));
+        when(invitationRepository.findByToken(token)).thenReturn(Mono.just(inv));
+        when(invitationRepository.save(any())).thenReturn(Mono.just(inv));
+
+        OrganisationMember member = new OrganisationMember();
+        member.setStatus(MemberStatus.PENDING);
+        when(memberRepository.findByOrganisationIdAndUserId(orgId, null)).thenReturn(Mono.just(member));
+        when(memberRepository.save(any())).thenReturn(Mono.just(member));
+
+        when(jwtUtil.generateToken(anyString(), anyString())).thenReturn("existing-auditor.jwt.token");
+
+        LoginRequest req = new LoginRequest();
+        req.setUsername("existingauditor@test.com");
+        req.setPassword("OwnPassword1@");
+        req.setInviteToken(token);
+
+        StepVerifier.create(authService.login(req))
+                .expectNextMatches(r -> r.getToken().equals("existing-auditor.jwt.token")
+                        && r.getRole() == Role.AUDITOR
+                        && !r.isMustChangePassword())
+                .verifyComplete();
+    }
+
+    @Test
     void login_wrongPassword_emitsInvalidRecord() {
         User u = user("alice@test.com", Role.CLIENT);
         u.setPassword(encoder.encode("RightPass1@"));
