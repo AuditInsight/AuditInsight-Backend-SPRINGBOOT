@@ -22,6 +22,9 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -33,6 +36,7 @@ class OrganisationServiceTest {
     @Mock private OrganisationInvitationRepository invitationRepo;
     @Mock private UserRepository userRepo;
     @Mock private ClientRepository clientRepo;
+    @Mock private AuditorRepository auditorRepo;
     @Mock private EmailService emailService;
 
     private OrganisationService service;
@@ -46,7 +50,7 @@ class OrganisationServiceTest {
     void setUp() {
         service = new OrganisationService(
                 orgRepo, memberRepo, currencyRepo, invitationRepo,
-                userRepo, clientRepo, emailService, encoder);
+                userRepo, clientRepo, auditorRepo, emailService, encoder);
     }
 
     // ──────────────────────────── createOrganisation ────────────────────────
@@ -215,6 +219,8 @@ class OrganisationServiceTest {
         when(memberRepo.findByOrganisationIdAndUserId(ORG_ID, 2L)).thenReturn(Mono.empty());
         when(memberRepo.save(any())).thenReturn(Mono.just(new OrganisationMember()));
         when(invitationRepo.save(any())).thenReturn(Mono.just(invitation(INV_ID, ORG_ID, "newmember@test.com")));
+        when(auditorRepo.findByEmailAddress("newmember@test.com")).thenReturn(Mono.empty());
+        when(auditorRepo.save(any())).thenReturn(Mono.just(new AuditorProfile()));
 
         InviteMemberRequest req = new InviteMemberRequest();
         req.setEmail("newmember@test.com");
@@ -224,6 +230,88 @@ class OrganisationServiceTest {
                 .expectNextMatches(r -> r.getStatus() == HttpStatus.OK
                         && r.getMessage().contains("Invitation sent"))
                 .verifyComplete();
+
+        verify(auditorRepo).save(argThat(p -> "newmember@test.com".equals(p.getEmailAddress())));
+    }
+
+    @Test
+    void inviteMember_existingUserWithAuditorProfile_doesNotDuplicateProfile() {
+        User requester = user(1L, "owner@test.com", Role.CLIENT);
+        when(userRepo.findByUsername("owner@test.com")).thenReturn(Mono.just(requester));
+
+        OrganisationMember ownerMember = member(ORG_ID, 1L, Role.CLIENT);
+        when(memberRepo.findByOrganisationIdAndUserId(ORG_ID, 1L)).thenReturn(Mono.just(ownerMember));
+
+        ClientProfile cp = clientProfile(CP_ID, "owner@test.com");
+        when(clientRepo.findByEmailAddress("owner@test.com")).thenReturn(Mono.just(cp));
+
+        Organisation org = org(ORG_ID, CP_ID, "Acme");
+        when(orgRepo.findById(ORG_ID)).thenReturn(Mono.just(org));
+
+        User invitee = user(2L, "auditor@test.com", Role.AUDITOR);
+        when(userRepo.findByUsername("auditor@test.com")).thenReturn(Mono.just(invitee));
+        when(memberRepo.findByOrganisationIdAndUserId(ORG_ID, 2L)).thenReturn(Mono.empty());
+        when(memberRepo.save(any())).thenReturn(Mono.just(new OrganisationMember()));
+        when(invitationRepo.save(any())).thenReturn(Mono.just(invitation(INV_ID, ORG_ID, "auditor@test.com")));
+
+        AuditorProfile existingProfile = new AuditorProfile();
+        existingProfile.setEmailAddress("auditor@test.com");
+        when(auditorRepo.findByEmailAddress("auditor@test.com")).thenReturn(Mono.just(existingProfile));
+
+        InviteMemberRequest req = new InviteMemberRequest();
+        req.setEmail("auditor@test.com");
+        req.setRole(Role.AUDITOR);
+
+        StepVerifier.create(service.inviteMember(ORG_ID, "owner@test.com", req))
+                .expectNextMatches(r -> r.getStatus() == HttpStatus.OK)
+                .verifyComplete();
+
+        verify(auditorRepo, never()).save(any());
+    }
+
+    @Test
+    void inviteMember_newAuditor_createsAuditorProfile() {
+        User requester = user(1L, "owner@test.com", Role.CLIENT);
+        when(userRepo.findByUsername("owner@test.com")).thenReturn(Mono.just(requester));
+
+        OrganisationMember ownerMember = member(ORG_ID, 1L, Role.CLIENT);
+        when(memberRepo.findByOrganisationIdAndUserId(ORG_ID, 1L)).thenReturn(Mono.just(ownerMember));
+
+        ClientProfile cp = clientProfile(CP_ID, "owner@test.com");
+        when(clientRepo.findByEmailAddress("owner@test.com")).thenReturn(Mono.just(cp));
+
+        Organisation org = org(ORG_ID, CP_ID, "Acme");
+        when(orgRepo.findById(ORG_ID)).thenReturn(Mono.just(org));
+
+        when(userRepo.findByUsername("newauditor@test.com")).thenReturn(Mono.empty());
+        User createdUser = user(3L, "newauditor@test.com", Role.AUDITOR);
+        when(userRepo.save(any())).thenReturn(Mono.just(createdUser));
+        when(memberRepo.save(any())).thenReturn(Mono.just(new OrganisationMember()));
+        when(invitationRepo.save(any())).thenReturn(Mono.just(invitation(INV_ID, ORG_ID, "newauditor@test.com")));
+        when(auditorRepo.findByEmailAddress("newauditor@test.com")).thenReturn(Mono.empty());
+        when(auditorRepo.save(any())).thenReturn(Mono.just(new AuditorProfile()));
+
+        InviteMemberRequest req = new InviteMemberRequest();
+        req.setEmail("newauditor@test.com");
+        req.setRole(Role.AUDITOR);
+
+        StepVerifier.create(service.inviteMember(ORG_ID, "owner@test.com", req))
+                .expectNextMatches(r -> r.getStatus() == HttpStatus.OK
+                        && r.getMessage().contains("Account created"))
+                .verifyComplete();
+
+        verify(auditorRepo).save(argThat(p -> "newauditor@test.com".equals(p.getEmailAddress())));
+    }
+
+    @Test
+    void inviteMember_adminRoleBlocked() {
+        InviteMemberRequest req = new InviteMemberRequest();
+        req.setEmail("x@test.com");
+        req.setRole(Role.ADMIN);
+
+        StepVerifier.create(service.inviteMember(ORG_ID, "owner@test.com", req))
+                .expectErrorMatches(e -> e instanceof InvalidRecord && e.getMessage().contains("this role"))
+                .verify();
     }
 
     @Test
@@ -266,7 +354,7 @@ class OrganisationServiceTest {
         req.setRole(Role.CLIENT);
 
         StepVerifier.create(service.inviteMember(ORG_ID, "owner@test.com", req))
-                .expectErrorMatches(e -> e instanceof InvalidRecord && e.getMessage().contains("client role"))
+                .expectErrorMatches(e -> e instanceof InvalidRecord && e.getMessage().contains("this role"))
                 .verify();
     }
 
