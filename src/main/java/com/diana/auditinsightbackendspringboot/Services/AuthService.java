@@ -216,18 +216,22 @@ public class AuthService {
 
     private Mono<User> validateRoleAccess(User user) {
         return switch (user.getRole()) {
-            // CLIENT and AUDITOR both self-verify via OTP before their account can log in.
-            case CLIENT, AUDITOR -> otpVerificationRepository.findByEmail(user.getUsername())
-                    .switchIfEmpty(Mono.error(new InvalidRecord(
-                            "Your account is not active. Please verify your email using the OTP.")))
-                    .flatMap(otp -> {
-                        if (otp.isVerified()) return Mono.just(user);
-                        if (otp.getExpiry().isBefore(LocalDateTime.now())) {
-                            return Mono.error(new InvalidRecord("Your OTP has expired. Please request a new one."));
-                        }
-                        return Mono.error(new InvalidRecord(
-                                "Your account is not active. Please verify your email using the OTP."));
-                    });
+            case CLIENT, AUDITOR -> {
+                if (user.isVerified()) {
+                    yield Mono.just(user);
+                }
+                yield otpVerificationRepository.findByEmail(user.getUsername())
+                        .switchIfEmpty(Mono.error(new InvalidRecord(
+                                "Your account is not active. Please verify your email using the OTP.")))
+                        .flatMap(otp -> {
+                            if (otp.isVerified()) return Mono.just(user);
+                            if (otp.getExpiry().isBefore(LocalDateTime.now())) {
+                                return Mono.error(new InvalidRecord("Your OTP has expired. Please request a new one."));
+                            }
+                            return Mono.error(new InvalidRecord(
+                                    "Your account is not active. Please verify your email using the OTP."));
+                        });
+            }
             case ADMIN -> Mono.just(user);
             // MEMBER accounts are created by invitation with verified=true — no extra check needed.
             case MEMBER -> Mono.just(user);

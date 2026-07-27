@@ -50,7 +50,7 @@ public class AuthController {
     @PostMapping("/verify-otp")
     @Operation(
             summary = "Verify OTP" ,
-            description = " the OTP sent on your registered email , you need to verify first so that your account got to be activated. Applies to CLIENT and AUDITOR users"
+            description = " the OTP sent on your registered email , you need to verify first so that your account got to be activated. Applies to Self-registered CLIENT and AUDITOR users . Org-invited CLIENT/AUDITOR accounts are created with verified=true directly and skip this gate — they're activated via the invite-token flow (processInviteToken) instead."
     )
     public Mono<ResponseEntity<ResponseMessage>> verifyOtp(@Valid @RequestBody OtpRequest otpRequest) {
         return authService.verifyOtp(otpRequest)
