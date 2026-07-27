@@ -9,6 +9,7 @@ import org.springframework.web.client.RestTemplate;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 @Service
 @Slf4j
@@ -199,7 +200,7 @@ public class EmailService {
     }
 
     public void sendExistingUserInvitationEmail(String email, String name,
-                                                String orgName, String role, String token) {
+                                                String orgName, UUID orgId, String role, String token) {
         if (email == null || orgName == null) {
             log.error("Cannot send invitation email: missing email or orgName");
             return;
@@ -210,14 +211,24 @@ public class EmailService {
                     <h2>You've been invited to join <b>%s</b> on AuditInsight</h2>
                     <p>Hello <b>%s</b>,</p>
                     <p>You have been invited to collaborate on <b>%s</b> as a <b>%s</b>.</p>
-                    <p>Use the invitation token below when logging in to activate your membership. This token expires in <b>72 hours</b>.</p>
+                    <table style='margin:20px 0;border-collapse:collapse;'>
+                      <tr>
+                        <td style='padding:8px 16px 8px 0;font-weight:bold;'>Organisation:</td>
+                        <td style='padding:8px;background:#f4f4f4;border-radius:4px;'>%s</td>
+                      </tr>
+                      <tr>
+                        <td style='padding:8px 16px 8px 0;font-weight:bold;'>Organisation ID:</td>
+                        <td style='padding:8px;background:#f4f4f4;border-radius:4px;font-family:monospace;'>%s</td>
+                      </tr>
+                    </table>
+                    <p>Log in with your existing account credentials and use the invitation token below to activate your membership. This token expires in <b>72 hours</b>.</p>
                     <div style='text-align:center;margin:20px;'>
                       <span style='font-family:monospace;font-size:0.9em;background:#f4f4f4;padding:12px 20px;
                                    border-radius:5px;border:1px solid #ccc;word-break:break-all;display:inline-block;'>%s</span>
                     </div>
                     <small>If you did not expect this, please ignore this email.</small>
                   </div>
-                </body></html>""", orgName, name, orgName, role, token);
+                </body></html>""", orgName, name, orgName, role, orgName, orgId, token);
         sendEmail(email, "You've been invited to join " + orgName + " on AuditInsight", html);
     }
 
