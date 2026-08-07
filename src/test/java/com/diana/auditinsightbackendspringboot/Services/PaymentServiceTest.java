@@ -154,7 +154,8 @@ class PaymentServiceTest {
         when(paymentRepository.findById(payment.getId())).thenReturn(Mono.just(payment));
         when(userRepository.findByUsername(email)).thenReturn(Mono.just(user()));
         when(memberRepository.findByOrganisationIdAndUserId(orgId, 1L)).thenReturn(Mono.just(activeMember()));
-        when(pawaPayService.getStatus(payment.getId())).thenReturn(Mono.just(PawaPayService.PawaPayStatus.SUCCESSFUL));
+        when(pawaPayService.getStatus(payment.getId())).thenReturn(Mono.just(
+                new PawaPayService.StatusResult(PawaPayService.PawaPayStatus.SUCCESSFUL, null)));
         when(paymentRepository.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
 
         Subscription sub = new Subscription();
@@ -174,11 +175,13 @@ class PaymentServiceTest {
         when(paymentRepository.findById(payment.getId())).thenReturn(Mono.just(payment));
         when(userRepository.findByUsername(email)).thenReturn(Mono.just(user()));
         when(memberRepository.findByOrganisationIdAndUserId(orgId, 1L)).thenReturn(Mono.just(activeMember()));
-        when(pawaPayService.getStatus(payment.getId())).thenReturn(Mono.just(PawaPayService.PawaPayStatus.FAILED));
+        when(pawaPayService.getStatus(payment.getId())).thenReturn(Mono.just(
+                new PawaPayService.StatusResult(PawaPayService.PawaPayStatus.FAILED, "PAYER_NOT_FOUND: Payer not found")));
         when(paymentRepository.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
 
         StepVerifier.create(paymentService.getMomoPaymentStatus(payment.getId(), email))
-                .expectNextMatches(p -> p.getStatus() == PaymentStatus.FAILED)
+                .expectNextMatches(p -> p.getStatus() == PaymentStatus.FAILED
+                        && "PAYER_NOT_FOUND: Payer not found".equals(p.getFailureReason()))
                 .verifyComplete();
 
         verify(activationService, never()).activateFromPayment(any());
@@ -190,7 +193,8 @@ class PaymentServiceTest {
         when(paymentRepository.findById(payment.getId())).thenReturn(Mono.just(payment));
         when(userRepository.findByUsername(email)).thenReturn(Mono.just(user()));
         when(memberRepository.findByOrganisationIdAndUserId(orgId, 1L)).thenReturn(Mono.just(activeMember()));
-        when(pawaPayService.getStatus(payment.getId())).thenReturn(Mono.just(PawaPayService.PawaPayStatus.PENDING));
+        when(pawaPayService.getStatus(payment.getId())).thenReturn(Mono.just(
+                new PawaPayService.StatusResult(PawaPayService.PawaPayStatus.PENDING, null)));
 
         StepVerifier.create(paymentService.getMomoPaymentStatus(payment.getId(), email))
                 .expectNextMatches(p -> p.getStatus() == PaymentStatus.PENDING)

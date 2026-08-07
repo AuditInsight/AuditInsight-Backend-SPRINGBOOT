@@ -56,6 +56,9 @@ public class Payment {
     @Column("subscription_id")
     private UUID subscriptionId;
 
+    @Column("failure_reason")
+    private String failureReason;
+
     @Column("created_by")
     private Long createdBy;
 

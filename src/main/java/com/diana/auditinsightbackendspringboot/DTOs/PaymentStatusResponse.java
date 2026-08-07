@@ -20,4 +20,5 @@ public class PaymentStatusResponse {
     private String chargedCurrency;
     private BigDecimal chargedAmount;
     private UUID subscriptionId;
+    private String failureReason;
 }

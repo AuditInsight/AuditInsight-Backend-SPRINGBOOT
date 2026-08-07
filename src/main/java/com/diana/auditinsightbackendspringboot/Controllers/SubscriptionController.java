@@ -112,6 +112,7 @@ public class SubscriptionController {
         r.setChargedCurrency(payment.getChargedCurrency());
         r.setChargedAmount(payment.getChargedAmount());
         r.setSubscriptionId(payment.getSubscriptionId());
+        r.setFailureReason(payment.getFailureReason());
         return r;
     }
 

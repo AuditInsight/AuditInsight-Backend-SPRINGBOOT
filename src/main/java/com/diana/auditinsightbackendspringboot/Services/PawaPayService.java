@@ -36,13 +36,15 @@ public class PawaPayService {
 
     public enum PawaPayStatus { PENDING, SUCCESSFUL, FAILED }
 
+    public record StatusResult(PawaPayStatus status, String failureReason) {}
+
     public Mono<Void> requestDeposit(UUID depositId, BigDecimal amountRwf, String phoneNumber) {
         return Mono.fromRunnable(() -> doRequestDeposit(depositId, amountRwf, phoneNumber))
                 .subscribeOn(Schedulers.boundedElastic())
                 .then();
     }
 
-    public Mono<PawaPayStatus> getStatus(UUID depositId) {
+    public Mono<StatusResult> getStatus(UUID depositId) {
         return Mono.fromCallable(() -> doGetStatus(depositId))
                 .subscribeOn(Schedulers.boundedElastic());
     }
@@ -89,7 +91,7 @@ public class PawaPayService {
     }
 
     @SuppressWarnings("unchecked")
-    private PawaPayStatus doGetStatus(UUID depositId) {
+    private StatusResult doGetStatus(UUID depositId) {
         ResponseEntity<Map> response;
         try {
             response = restTemplate.exchange(baseUrl + "/v2/deposits/" + depositId, HttpMethod.GET,
@@ -112,10 +114,28 @@ public class PawaPayService {
         }
 
         return switch (String.valueOf(data.get("status"))) {
-            case "COMPLETED" -> PawaPayStatus.SUCCESSFUL;
-            case "FAILED" -> PawaPayStatus.FAILED;
-            default -> PawaPayStatus.PENDING; // ACCEPTED, PROCESSING, IN_RECONCILIATION
+            case "COMPLETED" -> new StatusResult(PawaPayStatus.SUCCESSFUL, null);
+            case "FAILED" -> new StatusResult(PawaPayStatus.FAILED, extractFailureReason(data));
+            default -> new StatusResult(PawaPayStatus.PENDING, null); // ACCEPTED, PROCESSING, IN_RECONCILIATION
         };
+    }
+
+    /**
+     * pawaPay reports failures as a nested {failureCode, failureMessage} object on the deposit;
+     * older/edge responses may send a plain string instead, so handle both defensively.
+     */
+    @SuppressWarnings("unchecked")
+    private String extractFailureReason(Map<String, Object> data) {
+        Object failure = data.get("failureReason");
+        if (failure instanceof Map) {
+            Map<String, Object> failureMap = (Map<String, Object>) failure;
+            Object code = failureMap.get("failureCode");
+            Object message = failureMap.get("failureMessage");
+            if (code != null || message != null) {
+                return String.valueOf(code) + (message != null ? ": " + message : "");
+            }
+        }
+        return failure != null ? String.valueOf(failure) : "Unknown reason (pawaPay did not report a failure cause)";
     }
 
     /**
