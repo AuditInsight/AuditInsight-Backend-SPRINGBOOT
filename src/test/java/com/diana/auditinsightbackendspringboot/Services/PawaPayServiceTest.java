@@ -99,7 +99,7 @@ class PawaPayServiceTest {
                         "data", Map.of("status", "COMPLETED"))));
 
         StepVerifier.create(pawaPayService.getStatus(depositId))
-                .expectNext(PawaPayService.PawaPayStatus.SUCCESSFUL)
+                .expectNextMatches(r -> r.status() == PawaPayService.PawaPayStatus.SUCCESSFUL)
                 .verifyComplete();
     }
 
@@ -109,10 +109,13 @@ class PawaPayServiceTest {
         when(restTemplate.exchange(contains("/v2/deposits/" + depositId), eq(HttpMethod.GET),
                 any(HttpEntity.class), eq(Map.class)))
                 .thenReturn(ResponseEntity.ok(Map.of("status", "FOUND",
-                        "data", Map.of("status", "FAILED"))));
+                        "data", Map.of("status", "FAILED",
+                                "failureReason", Map.of("failureCode", "PAYER_LIMIT_REACHED",
+                                        "failureMessage", "Payer limit reached")))));
 
         StepVerifier.create(pawaPayService.getStatus(depositId))
-                .expectNext(PawaPayService.PawaPayStatus.FAILED)
+                .expectNextMatches(r -> r.status() == PawaPayService.PawaPayStatus.FAILED
+                        && r.failureReason().equals("PAYER_LIMIT_REACHED: Payer limit reached"))
                 .verifyComplete();
     }
 
@@ -125,7 +128,7 @@ class PawaPayServiceTest {
                         "data", Map.of("status", "PROCESSING"))));
 
         StepVerifier.create(pawaPayService.getStatus(depositId))
-                .expectNext(PawaPayService.PawaPayStatus.PENDING)
+                .expectNextMatches(r -> r.status() == PawaPayService.PawaPayStatus.PENDING)
                 .verifyComplete();
     }
 

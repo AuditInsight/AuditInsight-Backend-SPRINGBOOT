@@ -82,7 +82,7 @@ public class PaymentService {
                                 .flatMap(payment -> pawaPayService.requestDeposit(
                                                 payment.getId(), payment.getChargedAmount(), phoneNumber)
                                         .thenReturn(payment)
-                                        .onErrorResume(e -> markFailed(payment).then(Mono.error(e))))));
+                                        .onErrorResume(e -> markFailed(payment, e.getMessage()).then(Mono.error(e))))));
     }
 
     public Mono<CardCheckoutResult> startCardCheckout(UUID organisationId, String email, PlanTier planTier,
@@ -102,7 +102,7 @@ public class PaymentService {
                                     plan, directUsd, null, txRef, user.getId())
                                     .flatMap(payment -> flutterwaveService.initiateCheckout(txRef, usd, "USD", email)
                                             .map(checkoutUrl -> new CardCheckoutResult(payment, checkoutUrl))
-                                            .onErrorResume(e -> markFailed(payment).then(Mono.error(e))));
+                                            .onErrorResume(e -> markFailed(payment, e.getMessage()).then(Mono.error(e))));
                         }));
     }
 
@@ -129,8 +129,9 @@ public class PaymentService {
         return paymentRepository.save(payment);
     }
 
-    private Mono<Payment> markFailed(Payment payment) {
+    private Mono<Payment> markFailed(Payment payment, String reason) {
         payment.setStatus(PaymentStatus.FAILED);
+        payment.setFailureReason(reason);
         payment.setUpdatedAt(LocalDateTime.now());
         return paymentRepository.save(payment);
     }
@@ -151,9 +152,9 @@ public class PaymentService {
                         return Mono.just(payment);
                     }
                     return pawaPayService.getStatus(payment.getId())
-                            .flatMap(status -> switch (status) {
+                            .flatMap(result -> switch (result.status()) {
                                 case SUCCESSFUL -> markSuccessfulAndActivate(payment);
-                                case FAILED -> markFailed(payment);
+                                case FAILED -> markFailed(payment, result.failureReason());
                                 case PENDING -> Mono.just(payment);
                             });
                 });
@@ -187,7 +188,7 @@ public class PaymentService {
                     return flutterwaveService.verifyTransaction(transactionId)
                             .flatMap(verification -> verification.successful()
                                     ? markSuccessfulAndActivate(payment).then()
-                                    : markFailed(payment).then());
+                                    : markFailed(payment, "Flutterwave reported status: " + verification.status()).then());
                 });
     }
 
