@@ -18,7 +18,7 @@ import java.util.UUID;
 @Setter
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class TransactionResponse {
-    private String id;
+    private UUID id;
     private UUID organisationId;
     private String name;
     private LocalDate date;

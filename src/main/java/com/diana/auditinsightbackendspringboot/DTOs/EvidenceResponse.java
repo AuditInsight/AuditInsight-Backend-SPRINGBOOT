@@ -11,7 +11,7 @@ import java.util.UUID;
 public class EvidenceResponse {
     private UUID id;
     private UUID organisationId;
-    private String transactionId;
+    private UUID transactionId;
     private String documentName;
     private String folder;
     private String subfolder;

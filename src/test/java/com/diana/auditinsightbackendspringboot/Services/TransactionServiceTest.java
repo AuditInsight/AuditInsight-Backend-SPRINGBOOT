@@ -40,6 +40,8 @@ class TransactionServiceTest {
     private TransactionService service;
 
     private final UUID ORG_ID = UUID.randomUUID();
+    private final UUID TXN_ID = UUID.randomUUID();
+    private final UUID TXN_ID_2 = UUID.randomUUID();
 
     @BeforeEach
     void setUp() {
@@ -54,13 +56,12 @@ class TransactionServiceTest {
     @Test
     void createTransaction_clientUser_succeeds() {
         mockActiveMember("client@test.com", 1L, Role.CLIENT);
-        when(txnRepo.nextTransactionSequence(ORG_ID)).thenReturn(Mono.just(1));
         when(txnRepo.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
-        when(notificationService.notifyTransactionCreated(any(), anyString(), anyString(), anyString()))
+        when(notificationService.notifyTransactionCreated(any(), any(), anyString(), anyString()))
                 .thenReturn(Mono.empty());
 
         StepVerifier.create(service.createTransaction("client@test.com", createRequest()))
-                .expectNextMatches(r -> r.getId().equals("TXN-0001")
+                .expectNextMatches(r -> r.getId() != null
                         && r.getName().equals("Office Supplies")
                         && r.getCreatedBy().equals("Test User")
                         && r.getEvidenceStatus() == EvidenceStatus.MISSING
@@ -71,15 +72,27 @@ class TransactionServiceTest {
     @Test
     void createTransaction_memberUser_succeeds() {
         mockActiveMember("member@test.com", 2L, Role.MEMBER);
-        when(txnRepo.nextTransactionSequence(ORG_ID)).thenReturn(Mono.just(6));
         when(txnRepo.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
-        when(notificationService.notifyTransactionCreated(any(), anyString(), anyString(), anyString()))
+        when(notificationService.notifyTransactionCreated(any(), any(), anyString(), anyString()))
                 .thenReturn(Mono.empty());
 
         StepVerifier.create(service.createTransaction("member@test.com", createRequest()))
-                .expectNextMatches(r -> r.getId().equals("TXN-0006")
+                .expectNextMatches(r -> r.getId() != null
                         && r.getCreatedBy().equals("Test User"))
                 .verifyComplete();
+    }
+
+    @Test
+    void createTransaction_calledTwiceForSameOrg_generatesDistinctIds() {
+        mockActiveMember("client@test.com", 1L, Role.CLIENT);
+        when(txnRepo.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
+        when(notificationService.notifyTransactionCreated(any(), any(), anyString(), anyString()))
+                .thenReturn(Mono.empty());
+
+        UUID firstId = service.createTransaction("client@test.com", createRequest()).block().getId();
+        UUID secondId = service.createTransaction("client@test.com", createRequest()).block().getId();
+
+        org.assertj.core.api.Assertions.assertThat(firstId).isNotEqualTo(secondId);
     }
 
     @Test
@@ -119,9 +132,8 @@ class TransactionServiceTest {
     void createTransaction_ngoOrg_withDonorAndBudgetLine_succeeds() {
         when(organisationRepo.findById(ORG_ID)).thenReturn(Mono.just(organisation(ORG_ID, OrganisationType.NGO)));
         mockActiveMember("client@test.com", 1L, Role.CLIENT);
-        when(txnRepo.nextTransactionSequence(ORG_ID)).thenReturn(Mono.just(1));
         when(txnRepo.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
-        when(notificationService.notifyTransactionCreated(any(), anyString(), anyString(), anyString()))
+        when(notificationService.notifyTransactionCreated(any(), any(), anyString(), anyString()))
                 .thenReturn(Mono.empty());
 
         CreateTransactionRequest req = createRequest();
@@ -137,9 +149,8 @@ class TransactionServiceTest {
     @Test
     void createTransaction_privateOrg_donorAndBudgetLineNotRequired_succeeds() {
         mockActiveMember("client@test.com", 1L, Role.CLIENT);
-        when(txnRepo.nextTransactionSequence(ORG_ID)).thenReturn(Mono.just(1));
         when(txnRepo.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
-        when(notificationService.notifyTransactionCreated(any(), anyString(), anyString(), anyString()))
+        when(notificationService.notifyTransactionCreated(any(), any(), anyString(), anyString()))
                 .thenReturn(Mono.empty());
 
         StepVerifier.create(service.createTransaction("client@test.com", createRequest()))
@@ -164,13 +175,13 @@ class TransactionServiceTest {
     void listTransactions_activeMember_returnsAll() {
         mockActiveMember("member@test.com", 1L, Role.MEMBER);
         when(userRepo.findById(1L)).thenReturn(Mono.just(user(1L, "member@test.com", Role.MEMBER)));
-        Transaction t1 = txn("TXN-0001");
-        Transaction t2 = txn("TXN-0002");
+        Transaction t1 = txn(TXN_ID);
+        Transaction t2 = txn(TXN_ID_2);
         when(txnRepo.findAllByOrganisationId(ORG_ID)).thenReturn(Flux.just(t1, t2));
 
         StepVerifier.create(service.listTransactions(ORG_ID, "member@test.com"))
-                .expectNextMatches(r -> r.getId().equals("TXN-0001") && r.getCreatedBy().equals("Test User"))
-                .expectNextMatches(r -> r.getId().equals("TXN-0002"))
+                .expectNextMatches(r -> r.getId().equals(TXN_ID) && r.getCreatedBy().equals("Test User"))
+                .expectNextMatches(r -> r.getId().equals(TXN_ID_2))
                 .verifyComplete();
     }
 
@@ -178,7 +189,7 @@ class TransactionServiceTest {
     void listTransactions_creatorNotFound_fallsBackToUnknown() {
         mockActiveMember("member@test.com", 1L, Role.MEMBER);
         when(userRepo.findById(1L)).thenReturn(Mono.empty());
-        when(txnRepo.findAllByOrganisationId(ORG_ID)).thenReturn(Flux.just(txn("TXN-0001")));
+        when(txnRepo.findAllByOrganisationId(ORG_ID)).thenReturn(Flux.just(txn(TXN_ID)));
 
         StepVerifier.create(service.listTransactions(ORG_ID, "member@test.com"))
                 .expectNextMatches(r -> r.getCreatedBy().equals("Unknown"))
@@ -189,16 +200,16 @@ class TransactionServiceTest {
 
     @Test
     void getTransaction_withEvidence_returnsDetailWithEvidenceList() {
-        Transaction t = txn("TXN-0001");
-        when(txnRepo.findById("TXN-0001")).thenReturn(Mono.just(t));
+        Transaction t = txn(TXN_ID);
+        when(txnRepo.findById(TXN_ID)).thenReturn(Mono.just(t));
         mockActiveMember("client@test.com", 1L, Role.CLIENT);
         when(userRepo.findById(1L)).thenReturn(Mono.just(user(1L, "client@test.com", Role.CLIENT)));
 
-        Evidence ev = evidence("TXN-0001");
-        when(evidenceRepo.findAllByTransactionId("TXN-0001")).thenReturn(Flux.just(ev));
+        Evidence ev = evidence(TXN_ID);
+        when(evidenceRepo.findAllByTransactionId(TXN_ID)).thenReturn(Flux.just(ev));
 
-        StepVerifier.create(service.getTransaction("TXN-0001", "client@test.com"))
-                .expectNextMatches(r -> r.getId().equals("TXN-0001")
+        StepVerifier.create(service.getTransaction(TXN_ID, "client@test.com"))
+                .expectNextMatches(r -> r.getId().equals(TXN_ID)
                         && r.getCreatedBy().equals("Test User")
                         && r.getEvidence() != null
                         && r.getEvidence().size() == 1)
@@ -207,9 +218,10 @@ class TransactionServiceTest {
 
     @Test
     void getTransaction_notFound_returnsError() {
-        when(txnRepo.findById("TXN-9999")).thenReturn(Mono.empty());
+        UUID missingId = UUID.randomUUID();
+        when(txnRepo.findById(missingId)).thenReturn(Mono.empty());
 
-        StepVerifier.create(service.getTransaction("TXN-9999", "client@test.com"))
+        StepVerifier.create(service.getTransaction(missingId, "client@test.com"))
                 .expectErrorMatches(e -> e instanceof InvalidRecord
                         && e.getMessage().equals("Transaction not found"))
                 .verify();
@@ -219,21 +231,21 @@ class TransactionServiceTest {
 
     @Test
     void updateStatus_toCompleted_withMissingEvidence_autoFlags() {
-        Transaction t = txn("TXN-0001");
+        Transaction t = txn(TXN_ID);
         t.setEvidenceStatus(EvidenceStatus.MISSING);
-        when(txnRepo.findById("TXN-0001")).thenReturn(Mono.just(t));
+        when(txnRepo.findById(TXN_ID)).thenReturn(Mono.just(t));
         mockActiveMember("client@test.com", 1L, Role.CLIENT);
         when(txnRepo.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
         when(userRepo.findById(1L)).thenReturn(Mono.just(user(1L, "client@test.com", Role.CLIENT)));
 
-        when(reviewRepo.existsByTransactionIdAndFlaggedByAndStatus("TXN-0001", "system", ReviewStatus.OPEN))
+        when(reviewRepo.existsByTransactionIdAndFlaggedByAndStatus(TXN_ID, "system", ReviewStatus.OPEN))
                 .thenReturn(Mono.just(false));
         when(reviewRepo.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
 
         UpdateTransactionStatusRequest req = new UpdateTransactionStatusRequest();
         req.setStatus(TransactionStatus.COMPLETED);
 
-        StepVerifier.create(service.updateStatus("TXN-0001", "client@test.com", req))
+        StepVerifier.create(service.updateStatus(TXN_ID, "client@test.com", req))
                 .expectNextMatches(r -> r.getStatus() == TransactionStatus.COMPLETED
                         && r.getCreatedBy().equals("Test User"))
                 .verifyComplete();
@@ -241,14 +253,14 @@ class TransactionServiceTest {
 
     @Test
     void updateStatus_auditor_returnsForbidden() {
-        Transaction t = txn("TXN-0001");
-        when(txnRepo.findById("TXN-0001")).thenReturn(Mono.just(t));
+        Transaction t = txn(TXN_ID);
+        when(txnRepo.findById(TXN_ID)).thenReturn(Mono.just(t));
         mockActiveMember("auditor@test.com", 3L, Role.AUDITOR);
 
         UpdateTransactionStatusRequest req = new UpdateTransactionStatusRequest();
         req.setStatus(TransactionStatus.COMPLETED);
 
-        StepVerifier.create(service.updateStatus("TXN-0001", "auditor@test.com", req))
+        StepVerifier.create(service.updateStatus(TXN_ID, "auditor@test.com", req))
                 .expectErrorMatches(e -> e instanceof ForbiddenException
                         && e.getMessage().contains("Auditors cannot update"))
                 .verify();
@@ -258,42 +270,42 @@ class TransactionServiceTest {
 
     @Test
     void recalculate_zeroEvidence_setsMissing() {
-        Transaction t = txn("TXN-0001");
+        Transaction t = txn(TXN_ID);
         t.setEvidenceStatus(EvidenceStatus.PARTIAL);
-        when(evidenceRepo.countByTransactionId("TXN-0001")).thenReturn(Mono.just(0L));
-        when(txnRepo.findById("TXN-0001")).thenReturn(Mono.just(t));
+        when(evidenceRepo.countByTransactionId(TXN_ID)).thenReturn(Mono.just(0L));
+        when(txnRepo.findById(TXN_ID)).thenReturn(Mono.just(t));
         when(txnRepo.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
 
-        StepVerifier.create(service.recalculateEvidenceStatus("TXN-0001"))
+        StepVerifier.create(service.recalculateEvidenceStatus(TXN_ID))
                 .verifyComplete();
     }
 
     @Test
     void recalculate_oneEvidence_setsPartial() {
-        Transaction t = txn("TXN-0001");
+        Transaction t = txn(TXN_ID);
         t.setEvidenceStatus(EvidenceStatus.MISSING);
-        when(evidenceRepo.countByTransactionId("TXN-0001")).thenReturn(Mono.just(1L));
-        when(txnRepo.findById("TXN-0001")).thenReturn(Mono.just(t));
+        when(evidenceRepo.countByTransactionId(TXN_ID)).thenReturn(Mono.just(1L));
+        when(txnRepo.findById(TXN_ID)).thenReturn(Mono.just(t));
         when(txnRepo.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
 
-        StepVerifier.create(service.recalculateEvidenceStatus("TXN-0001"))
+        StepVerifier.create(service.recalculateEvidenceStatus(TXN_ID))
                 .verifyComplete();
     }
 
     @Test
     void recalculate_threeOrMoreEvidence_setsComplete_andAutoResolvesFlags() {
-        Transaction t = txn("TXN-0001");
+        Transaction t = txn(TXN_ID);
         t.setEvidenceStatus(EvidenceStatus.PARTIAL);
-        when(evidenceRepo.countByTransactionId("TXN-0001")).thenReturn(Mono.just(3L));
-        when(txnRepo.findById("TXN-0001")).thenReturn(Mono.just(t));
+        when(evidenceRepo.countByTransactionId(TXN_ID)).thenReturn(Mono.just(3L));
+        when(txnRepo.findById(TXN_ID)).thenReturn(Mono.just(t));
         when(txnRepo.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
 
-        ReviewQueue openFlag = reviewQueueItem("TXN-0001", IssueType.MISSING_EVIDENCE, ReviewStatus.OPEN);
-        when(reviewRepo.findByTransactionIdAndStatus("TXN-0001", ReviewStatus.OPEN))
+        ReviewQueue openFlag = reviewQueueItem(TXN_ID, IssueType.MISSING_EVIDENCE, ReviewStatus.OPEN);
+        when(reviewRepo.findByTransactionIdAndStatus(TXN_ID, ReviewStatus.OPEN))
                 .thenReturn(Flux.just(openFlag));
         when(reviewRepo.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
 
-        StepVerifier.create(service.recalculateEvidenceStatus("TXN-0001"))
+        StepVerifier.create(service.recalculateEvidenceStatus(TXN_ID))
                 .verifyComplete();
     }
 
@@ -332,7 +344,7 @@ class TransactionServiceTest {
         return org;
     }
 
-    private Transaction txn(String id) {
+    private Transaction txn(UUID id) {
         Transaction t = new Transaction();
         t.setId(id);
         t.setOrganisationId(ORG_ID);
@@ -348,7 +360,7 @@ class TransactionServiceTest {
         return t;
     }
 
-    private Evidence evidence(String txnId) {
+    private Evidence evidence(UUID txnId) {
         Evidence ev = new Evidence();
         ev.setId(UUID.randomUUID());
         ev.setOrganisationId(ORG_ID);
@@ -363,7 +375,7 @@ class TransactionServiceTest {
         return ev;
     }
 
-    private ReviewQueue reviewQueueItem(String txnId, IssueType issueType, ReviewStatus status) {
+    private ReviewQueue reviewQueueItem(UUID txnId, IssueType issueType, ReviewStatus status) {
         ReviewQueue rq = new ReviewQueue();
         rq.setId(UUID.randomUUID());
         rq.setOrganisationId(ORG_ID);

@@ -118,7 +118,7 @@ public class EvidenceService {
 
 
     public Mono<EvidenceResponse> uploadEvidence(String email, FilePart filePart,
-                                                 UUID organisationId, String transactionId,
+                                                 UUID organisationId, UUID transactionId,
                                                  String documentName, String folder,
                                                  String subfolder, String notes) {
         return organisationRepo.findById(organisationId)
@@ -194,7 +194,7 @@ public class EvidenceService {
     }
 
 
-    public Flux<EvidenceResponse> listByTransaction(String txnId, String email) {
+    public Flux<EvidenceResponse> listByTransaction(UUID txnId, String email) {
         return txnRepo.findById(txnId)
                 .switchIfEmpty(Mono.error(new InvalidRecord("Transaction not found")))
                 .flatMapMany(txn -> assertCanView(txn.getOrganisationId(), email)

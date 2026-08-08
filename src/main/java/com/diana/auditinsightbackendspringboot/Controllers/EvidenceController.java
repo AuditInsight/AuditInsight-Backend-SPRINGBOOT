@@ -48,7 +48,7 @@ public class EvidenceController {
                         auth.getName(),
                         filePart,
                         UUID.fromString(organisationId),
-                        transactionId,
+                        UUID.fromString(transactionId),
                         documentName,
                         folder,
                         subfolder,
@@ -80,7 +80,7 @@ public class EvidenceController {
                description = "Returns all evidence linked to a specific transaction. All members.")
     public Flux<EvidenceResponse> listByTransaction(
             Authentication auth,
-            @PathVariable String transactionId) {
+            @PathVariable UUID transactionId) {
         return evidenceService.listByTransaction(transactionId, auth.getName());
     }
 }

@@ -13,7 +13,7 @@ import java.util.UUID;
 public class ReviewQueueResponse {
     private UUID id;
     private UUID organisationId;
-    private String transactionId;
+    private UUID transactionId;
     private IssueType issueType;
     private String description;
     private ReviewStatus status;

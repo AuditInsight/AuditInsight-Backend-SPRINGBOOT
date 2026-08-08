@@ -10,7 +10,7 @@ import java.util.UUID;
 @Setter
 public class CreateEvidenceRequest {
     private UUID organisationId;
-    private String transactionId;
+    private UUID transactionId;
     private String documentName;
     private String folder;
     private String subfolder;

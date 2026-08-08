@@ -15,8 +15,8 @@ public class CreateReviewQueueRequest {
     @NotNull(message = "Organisation ID is required")
     private UUID organisationId;
 
-    @NotBlank(message = "Transaction ID is required")
-    private String transactionId;
+    @NotNull(message = "Transaction ID is required")
+    private UUID transactionId;
 
     @NotNull(message = "Issue type is required")
     private IssueType issueType;

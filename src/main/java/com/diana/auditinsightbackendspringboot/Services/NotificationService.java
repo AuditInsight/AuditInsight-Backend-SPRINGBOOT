@@ -39,24 +39,24 @@ public class NotificationService {
         void accept(String email, String clientName, String orgName);
     }
 
-    public Mono<Void> notifyTransactionCreated(UUID orgId, String txnId, String txnName, String creatorName) {
+    public Mono<Void> notifyTransactionCreated(UUID orgId, UUID txnId, String txnName, String creatorName) {
         return withClient(orgId, (email, clientName, orgName) ->
-                emailService.sendTransactionCreatedEmail(email, clientName, orgName, txnId, txnName, creatorName));
+                emailService.sendTransactionCreatedEmail(email, clientName, orgName, txnId.toString(), txnName, creatorName));
     }
 
-    public Mono<Void> notifyEvidenceUploaded(UUID orgId, String txnId, String documentName, String uploaderName) {
+    public Mono<Void> notifyEvidenceUploaded(UUID orgId, UUID txnId, String documentName, String uploaderName) {
         return withClient(orgId, (email, clientName, orgName) ->
-                emailService.sendEvidenceUploadedEmail(email, clientName, orgName, txnId, documentName, uploaderName));
+                emailService.sendEvidenceUploadedEmail(email, clientName, orgName, txnId.toString(), documentName, uploaderName));
     }
 
-    public Mono<Void> notifyIssueFlagged(UUID orgId, String txnId, String issueType,
+    public Mono<Void> notifyIssueFlagged(UUID orgId, UUID txnId, String issueType,
                                          String description, String auditorName) {
         return withClient(orgId, (email, clientName, orgName) ->
-                emailService.sendIssueFlaggedEmail(email, clientName, orgName, txnId, issueType, description, auditorName));
+                emailService.sendIssueFlaggedEmail(email, clientName, orgName, txnId.toString(), issueType, description, auditorName));
     }
 
-    public Mono<Void> notifyIssueResolved(UUID orgId, String txnId, String resolutionNote, String resolvedByName) {
+    public Mono<Void> notifyIssueResolved(UUID orgId, UUID txnId, String resolutionNote, String resolvedByName) {
         return withClient(orgId, (email, clientName, orgName) ->
-                emailService.sendIssueResolvedEmail(email, clientName, orgName, txnId, resolutionNote, resolvedByName));
+                emailService.sendIssueResolvedEmail(email, clientName, orgName, txnId.toString(), resolutionNote, resolvedByName));
     }
 }

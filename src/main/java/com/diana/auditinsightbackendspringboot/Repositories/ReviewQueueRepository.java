@@ -10,7 +10,7 @@ import java.util.UUID;
 
 public interface ReviewQueueRepository extends ReactiveCrudRepository<ReviewQueue, UUID> {
     Flux<ReviewQueue> findAllByOrganisationId(UUID organisationId);
-    Flux<ReviewQueue> findByTransactionIdAndStatus(String transactionId, ReviewStatus status);
+    Flux<ReviewQueue> findByTransactionIdAndStatus(UUID transactionId, ReviewStatus status);
     Mono<Boolean> existsByTransactionIdAndFlaggedByAndStatus(
-            String transactionId, String flaggedBy, ReviewStatus status);
+            UUID transactionId, String flaggedBy, ReviewStatus status);
 }

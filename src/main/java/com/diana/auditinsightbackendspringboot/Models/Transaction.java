@@ -20,11 +20,11 @@ import java.util.UUID;
 @Table("transactions")
 @Getter
 @Setter
-public class Transaction implements Persistable<String> {
+public class Transaction implements Persistable<UUID> {
 
     @Id
     @Column("id")
-    private String id;
+    private UUID id;
 
     /** Tells Spring Data R2DBC to INSERT (not UPDATE) when we assign our own ID. */
     @Transient
