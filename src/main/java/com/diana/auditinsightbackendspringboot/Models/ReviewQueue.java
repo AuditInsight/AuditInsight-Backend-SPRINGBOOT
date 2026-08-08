@@ -24,7 +24,7 @@ public class ReviewQueue {
     private UUID organisationId;
 
     @Column("transaction_id")
-    private String transactionId;
+    private UUID transactionId;
 
     @Column("issue_type")
     private IssueType issueType;

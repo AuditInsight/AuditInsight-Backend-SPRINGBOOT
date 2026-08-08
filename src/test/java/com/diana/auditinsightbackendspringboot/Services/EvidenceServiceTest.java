@@ -44,6 +44,8 @@ class EvidenceServiceTest {
 
     private final UUID ORG_ID = UUID.randomUUID();
     private final UUID EV_ID  = UUID.randomUUID();
+    private final UUID TXN_ID = UUID.randomUUID();
+    private final UUID TXN_ID_2 = UUID.randomUUID();
 
     @BeforeEach
     void setUp() {
@@ -58,16 +60,16 @@ class EvidenceServiceTest {
     @Test
     void uploadEvidence_validFile_clientUser_succeeds() {
         mockActiveMember("client@test.com", 1L, Role.CLIENT);
-        when(txnRepo.findById("TXN-0001")).thenReturn(Mono.just(txn("TXN-0001")));
+        when(txnRepo.findById(TXN_ID)).thenReturn(Mono.just(txn(TXN_ID)));
         when(cloudinaryService.upload(any(byte[].class), anyString()))
                 .thenReturn(Mono.just("https://res.cloudinary.com/test/invoice.pdf"));
         when(evidenceRepo.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
-        when(txnService.recalculateEvidenceStatus("TXN-0001")).thenReturn(Mono.empty());
-        when(notificationService.notifyEvidenceUploaded(any(), anyString(), anyString(), anyString()))
+        when(txnService.recalculateEvidenceStatus(TXN_ID)).thenReturn(Mono.empty());
+        when(notificationService.notifyEvidenceUploaded(any(), any(), anyString(), anyString()))
                 .thenReturn(Mono.empty());
 
         StepVerifier.create(service.uploadEvidence("client@test.com", filePart("invoice.pdf"),
-                        ORG_ID, "TXN-0001", "Supplier Invoice",
+                        ORG_ID, TXN_ID, "Supplier Invoice",
                         "Purchases and Procurement", "Supplier Invoices", null))
                 .expectNextMatches(r -> r.getFileType().equals("pdf")
                         && r.getFileUpload().equals("https://res.cloudinary.com/test/invoice.pdf")
@@ -78,16 +80,16 @@ class EvidenceServiceTest {
     @Test
     void uploadEvidence_jpegFile_succeeds() {
         mockActiveMember("member@test.com", 2L, Role.MEMBER);
-        when(txnRepo.findById("TXN-0001")).thenReturn(Mono.just(txn("TXN-0001")));
+        when(txnRepo.findById(TXN_ID)).thenReturn(Mono.just(txn(TXN_ID)));
         when(cloudinaryService.upload(any(byte[].class), anyString()))
                 .thenReturn(Mono.just("https://res.cloudinary.com/test/receipt.jpg"));
         when(evidenceRepo.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
-        when(txnService.recalculateEvidenceStatus("TXN-0001")).thenReturn(Mono.empty());
-        when(notificationService.notifyEvidenceUploaded(any(), anyString(), anyString(), anyString()))
+        when(txnService.recalculateEvidenceStatus(TXN_ID)).thenReturn(Mono.empty());
+        when(notificationService.notifyEvidenceUploaded(any(), any(), anyString(), anyString()))
                 .thenReturn(Mono.empty());
 
         StepVerifier.create(service.uploadEvidence("member@test.com", filePart("receipt.jpg"),
-                        ORG_ID, "TXN-0001", "Receipt",
+                        ORG_ID, TXN_ID, "Receipt",
                         "Sales Evidence", "Receipts", "Monthly receipt"))
                 .expectNextMatches(r -> r.getFileType().equals("jpg"))
                 .verifyComplete();
@@ -96,7 +98,7 @@ class EvidenceServiceTest {
     @Test
     void uploadEvidence_disallowedFileType_returnsError() {
         StepVerifier.create(service.uploadEvidence("client@test.com", filePart("report.docx"),
-                        ORG_ID, "TXN-0001", "Report",
+                        ORG_ID, TXN_ID, "Report",
                         "Purchases and Procurement", "Supplier Invoices", null))
                 .expectErrorMatches(e -> e instanceof InvalidRecord
                         && e.getMessage().contains("docx")
@@ -107,7 +109,7 @@ class EvidenceServiceTest {
     @Test
     void uploadEvidence_noExtension_returnsError() {
         StepVerifier.create(service.uploadEvidence("client@test.com", filePart("noextension"),
-                        ORG_ID, "TXN-0001", "Doc",
+                        ORG_ID, TXN_ID, "Doc",
                         "Purchases and Procurement", "Supplier Invoices", null))
                 .expectErrorMatches(e -> e instanceof InvalidRecord
                         && e.getMessage().contains("must have an extension"))
@@ -117,7 +119,7 @@ class EvidenceServiceTest {
     @Test
     void uploadEvidence_invalidFolder_returnsError() {
         StepVerifier.create(service.uploadEvidence("client@test.com", filePart("invoice.pdf"),
-                        ORG_ID, "TXN-0001", "Invoice",
+                        ORG_ID, TXN_ID, "Invoice",
                         "Invalid Folder", "Wrong Subfolder", null))
                 .expectErrorMatches(e -> e instanceof InvalidRecord
                         && e.getMessage().contains("Invalid folder or subfolder"))
@@ -127,7 +129,7 @@ class EvidenceServiceTest {
     @Test
     void uploadEvidence_invalidSubfolder_returnsError() {
         StepVerifier.create(service.uploadEvidence("client@test.com", filePart("invoice.pdf"),
-                        ORG_ID, "TXN-0001", "Invoice",
+                        ORG_ID, TXN_ID, "Invoice",
                         "Purchases and Procurement", "Wrong Subfolder", null))
                 .expectErrorMatches(e -> e instanceof InvalidRecord
                         && e.getMessage().contains("Invalid folder or subfolder"))
@@ -139,7 +141,7 @@ class EvidenceServiceTest {
         mockActiveMember("auditor@test.com", 3L, Role.AUDITOR);
 
         StepVerifier.create(service.uploadEvidence("auditor@test.com", filePart("invoice.pdf"),
-                        ORG_ID, "TXN-0001", "Invoice",
+                        ORG_ID, TXN_ID, "Invoice",
                         "Purchases and Procurement", "Supplier Invoices", null))
                 .expectErrorMatches(e -> e instanceof ForbiddenException
                         && e.getMessage().contains("Auditors cannot upload evidence"))
@@ -149,12 +151,12 @@ class EvidenceServiceTest {
     @Test
     void uploadEvidence_transactionFromDifferentOrg_returnsError() {
         mockActiveMember("client@test.com", 1L, Role.CLIENT);
-        Transaction t = txn("TXN-0001");
+        Transaction t = txn(TXN_ID);
         t.setOrganisationId(UUID.randomUUID()); // different org
-        when(txnRepo.findById("TXN-0001")).thenReturn(Mono.just(t));
+        when(txnRepo.findById(TXN_ID)).thenReturn(Mono.just(t));
 
         StepVerifier.create(service.uploadEvidence("client@test.com", filePart("invoice.pdf"),
-                        ORG_ID, "TXN-0001", "Invoice",
+                        ORG_ID, TXN_ID, "Invoice",
                         "Purchases and Procurement", "Supplier Invoices", null))
                 .expectErrorMatches(e -> e instanceof InvalidRecord
                         && e.getMessage().contains("does not belong to this organisation"))
@@ -164,10 +166,10 @@ class EvidenceServiceTest {
     @Test
     void uploadEvidence_transactionNotFound_returnsError() {
         mockActiveMember("client@test.com", 1L, Role.CLIENT);
-        when(txnRepo.findById("TXN-0001")).thenReturn(Mono.empty());
+        when(txnRepo.findById(TXN_ID)).thenReturn(Mono.empty());
 
         StepVerifier.create(service.uploadEvidence("client@test.com", filePart("invoice.pdf"),
-                        ORG_ID, "TXN-0001", "Invoice",
+                        ORG_ID, TXN_ID, "Invoice",
                         "Purchases and Procurement", "Supplier Invoices", null))
                 .expectErrorMatches(e -> e instanceof InvalidRecord
                         && e.getMessage().equals("Transaction not found"))
@@ -179,7 +181,7 @@ class EvidenceServiceTest {
         when(organisationRepo.findById(ORG_ID)).thenReturn(Mono.empty());
 
         StepVerifier.create(service.uploadEvidence("client@test.com", filePart("invoice.pdf"),
-                        ORG_ID, "TXN-0001", "Invoice",
+                        ORG_ID, TXN_ID, "Invoice",
                         "Purchases and Procurement", "Supplier Invoices", null))
                 .expectErrorMatches(e -> e instanceof InvalidRecord
                         && e.getMessage().equals("Organisation not found"))
@@ -190,16 +192,16 @@ class EvidenceServiceTest {
     void uploadEvidence_ngoOrg_ngoFolder_succeeds() {
         when(organisationRepo.findById(ORG_ID)).thenReturn(Mono.just(organisation(ORG_ID, OrganisationType.NGO)));
         mockActiveMember("client@test.com", 1L, Role.CLIENT);
-        when(txnRepo.findById("TXN-0001")).thenReturn(Mono.just(txn("TXN-0001")));
+        when(txnRepo.findById(TXN_ID)).thenReturn(Mono.just(txn(TXN_ID)));
         when(cloudinaryService.upload(any(byte[].class), anyString()))
                 .thenReturn(Mono.just("https://res.cloudinary.com/test/donor-report.pdf"));
         when(evidenceRepo.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
-        when(txnService.recalculateEvidenceStatus("TXN-0001")).thenReturn(Mono.empty());
-        when(notificationService.notifyEvidenceUploaded(any(), anyString(), anyString(), anyString()))
+        when(txnService.recalculateEvidenceStatus(TXN_ID)).thenReturn(Mono.empty());
+        when(notificationService.notifyEvidenceUploaded(any(), any(), anyString(), anyString()))
                 .thenReturn(Mono.empty());
 
         StepVerifier.create(service.uploadEvidence("client@test.com", filePart("donor-report.pdf"),
-                        ORG_ID, "TXN-0001", "Donor Report",
+                        ORG_ID, TXN_ID, "Donor Report",
                         "Financial Reporting", "Donor Financial Reports", null))
                 .expectNextMatches(r -> r.getFileType().equals("pdf"))
                 .verifyComplete();
@@ -208,7 +210,7 @@ class EvidenceServiceTest {
     @Test
     void uploadEvidence_ngoFolder_rejectedForPrivateOrg() {
         StepVerifier.create(service.uploadEvidence("client@test.com", filePart("donor-report.pdf"),
-                        ORG_ID, "TXN-0001", "Donor Report",
+                        ORG_ID, TXN_ID, "Donor Report",
                         "Financial Reporting", "Donor Financial Reports", null))
                 .expectErrorMatches(e -> e instanceof InvalidRecord
                         && e.getMessage().contains("Invalid folder or subfolder"))
@@ -220,7 +222,7 @@ class EvidenceServiceTest {
         when(organisationRepo.findById(ORG_ID)).thenReturn(Mono.just(organisation(ORG_ID, OrganisationType.NGO)));
 
         StepVerifier.create(service.uploadEvidence("client@test.com", filePart("invoice.pdf"),
-                        ORG_ID, "TXN-0001", "Invoice",
+                        ORG_ID, TXN_ID, "Invoice",
                         "Sales Evidence", "Receipts", null))
                 .expectErrorMatches(e -> e instanceof InvalidRecord
                         && e.getMessage().contains("Invalid folder or subfolder"))
@@ -233,7 +235,7 @@ class EvidenceServiceTest {
     void listByOrg_activeMember_returnsAll() {
         mockActiveMember("member@test.com", 1L, Role.MEMBER);
         when(evidenceRepo.findAllByOrganisationId(ORG_ID))
-                .thenReturn(Flux.just(evidence(EV_ID, "TXN-0001"), evidence(UUID.randomUUID(), "TXN-0002")));
+                .thenReturn(Flux.just(evidence(EV_ID, TXN_ID), evidence(UUID.randomUUID(), TXN_ID_2)));
 
         StepVerifier.create(service.listByOrg(ORG_ID, "member@test.com"))
                 .expectNextCount(2)
@@ -244,7 +246,7 @@ class EvidenceServiceTest {
     void listByOrg_auditorCanView() {
         mockActiveMember("auditor@test.com", 3L, Role.AUDITOR);
         when(evidenceRepo.findAllByOrganisationId(ORG_ID))
-                .thenReturn(Flux.just(evidence(EV_ID, "TXN-0001")));
+                .thenReturn(Flux.just(evidence(EV_ID, TXN_ID)));
 
         StepVerifier.create(service.listByOrg(ORG_ID, "auditor@test.com"))
                 .expectNextCount(1)
@@ -255,7 +257,7 @@ class EvidenceServiceTest {
 
     @Test
     void getEvidence_activeMember_returnsRecord() {
-        Evidence ev = evidence(EV_ID, "TXN-0001");
+        Evidence ev = evidence(EV_ID, TXN_ID);
         when(evidenceRepo.findById(EV_ID)).thenReturn(Mono.just(ev));
         mockActiveMember("client@test.com", 1L, Role.CLIENT);
 
@@ -278,13 +280,13 @@ class EvidenceServiceTest {
 
     @Test
     void listByTransaction_activeMember_returnsEvidence() {
-        when(txnRepo.findById("TXN-0001")).thenReturn(Mono.just(txn("TXN-0001")));
+        when(txnRepo.findById(TXN_ID)).thenReturn(Mono.just(txn(TXN_ID)));
         mockActiveMember("member@test.com", 1L, Role.MEMBER);
-        when(evidenceRepo.findAllByTransactionId("TXN-0001"))
-                .thenReturn(Flux.just(evidence(EV_ID, "TXN-0001")));
+        when(evidenceRepo.findAllByTransactionId(TXN_ID))
+                .thenReturn(Flux.just(evidence(EV_ID, TXN_ID)));
 
-        StepVerifier.create(service.listByTransaction("TXN-0001", "member@test.com"))
-                .expectNextMatches(r -> r.getTransactionId().equals("TXN-0001"))
+        StepVerifier.create(service.listByTransaction(TXN_ID, "member@test.com"))
+                .expectNextMatches(r -> r.getTransactionId().equals(TXN_ID))
                 .verifyComplete();
     }
 
@@ -324,7 +326,7 @@ class EvidenceServiceTest {
         return m;
     }
 
-    private Transaction txn(String id) {
+    private Transaction txn(UUID id) {
         Transaction t = new Transaction();
         t.setId(id);
         t.setOrganisationId(ORG_ID);
@@ -347,7 +349,7 @@ class EvidenceServiceTest {
         return org;
     }
 
-    private Evidence evidence(UUID id, String txnId) {
+    private Evidence evidence(UUID id, UUID txnId) {
         Evidence ev = new Evidence();
         ev.setId(id);
         ev.setOrganisationId(ORG_ID);

@@ -55,15 +55,10 @@ public class TransactionService {
     private record OrgMemberContext(User user, Role role) {}
 
 
-    private Mono<String> generateTxnId(UUID orgId) {
-        return txnRepo.nextTransactionSequence(orgId)
-                .map(seq -> String.format("TXN-%04d", seq));
-    }
-
-
     private TransactionResponse toResponse(Transaction t, String creatorName) {
         TransactionResponse r = new TransactionResponse();
-        r.setId(t.getId());
+        r.setId(t.getId
+                ());
         r.setOrganisationId(t.getOrganisationId());
         r.setName(t.getName());
         r.setDate(t.getDate());
@@ -112,34 +107,31 @@ public class TransactionService {
                                 "Donor and budget line are required for NGO transactions."));
                     }
 
-                    return generateTxnId(req.getOrganisationId())
-                            .flatMap(txnId -> {
-                                Transaction t = new Transaction();
-                                t.setId(txnId);
-                                t.setOrganisationId(req.getOrganisationId());
-                                t.setName(req.getName());
-                                t.setDate(req.getDate());
-                                t.setAmount(req.getAmount());
-                                t.setType(req.getType());
-                                t.setCounterparty(req.getCounterparty());
-                                t.setDonor(req.getDonor());
-                                t.setBudgetLine(req.getBudgetLine());
-                                t.setPaymentMethod(req.getPaymentMethod());
-                                t.setStatus(TransactionStatus.PENDING);
-                                t.setEvidenceStatus(EvidenceStatus.MISSING);
-                                t.setCreatedBy(ctx.user().getId());
-                                t.setCreatedAt(LocalDateTime.now());
-                                t.setNewRecord(true);
+                    Transaction t = new Transaction();
+                    t.setId(UUID.randomUUID());
+                    t.setOrganisationId(req.getOrganisationId());
+                    t.setName(req.getName());
+                    t.setDate(req.getDate());
+                    t.setAmount(req.getAmount());
+                    t.setType(req.getType());
+                    t.setCounterparty(req.getCounterparty());
+                    t.setDonor(req.getDonor());
+                    t.setBudgetLine(req.getBudgetLine());
+                    t.setPaymentMethod(req.getPaymentMethod());
+                    t.setStatus(TransactionStatus.PENDING);
+                    t.setEvidenceStatus(EvidenceStatus.MISSING);
+                    t.setCreatedBy(ctx.user().getId());
+                    t.setCreatedAt(LocalDateTime.now());
+                    t.setNewRecord(true);
 
-                                return txnRepo.save(t)
-                                        .flatMap(saved -> notificationService
-                                                .notifyTransactionCreated(
-                                                        saved.getOrganisationId(),
-                                                        saved.getId(),
-                                                        saved.getName(),
-                                                        ctx.user().getFullName())
-                                                .thenReturn(toResponse(saved, ctx.user().getFullName())));
-                            });
+                    return txnRepo.save(t)
+                            .flatMap(saved -> notificationService
+                                    .notifyTransactionCreated(
+                                            saved.getOrganisationId(),
+                                            saved.getId(),
+                                            saved.getName(),
+                                            ctx.user().getFullName())
+                                    .thenReturn(toResponse(saved, ctx.user().getFullName())));
                 });
     }
 
@@ -151,7 +143,7 @@ public class TransactionService {
     }
 
 
-    public Mono<TransactionResponse> getTransaction(String txnId, String email) {
+    public Mono<TransactionResponse> getTransaction(UUID txnId, String email) {
         return txnRepo.findById(txnId)
                 .switchIfEmpty(Mono.error(new InvalidRecord("Transaction not found")))
                 .flatMap(t -> resolveContext(t.getOrganisationId(), email)
@@ -181,7 +173,7 @@ public class TransactionService {
     }
 
 
-    public Mono<TransactionResponse> updateStatus(String txnId, String email,
+    public Mono<TransactionResponse> updateStatus(UUID txnId, String email,
                                                   UpdateTransactionStatusRequest req) {
         return txnRepo.findById(txnId)
                 .switchIfEmpty(Mono.error(new InvalidRecord("Transaction not found")))
@@ -208,7 +200,7 @@ public class TransactionService {
     }
 
 
-    Mono<Void> createSystemFlag(UUID orgId, String txnId) {
+    Mono<Void> createSystemFlag(UUID orgId, UUID txnId) {
         return reviewRepo.existsByTransactionIdAndFlaggedByAndStatus(txnId, "system", ReviewStatus.OPEN)
                 .flatMap(exists -> {
                     if (exists) return Mono.empty();
@@ -225,7 +217,7 @@ public class TransactionService {
     }
 
 
-    Mono<Void> recalculateEvidenceStatus(String txnId) {
+    Mono<Void> recalculateEvidenceStatus(UUID txnId) {
         return evidenceRepo.countByTransactionId(txnId)
                 .flatMap(count -> txnRepo.findById(txnId)
                         .flatMap(t -> {

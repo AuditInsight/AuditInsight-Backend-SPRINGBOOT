@@ -30,6 +30,7 @@ class NotificationServiceTest {
 
     private final UUID ORG_ID    = UUID.randomUUID();
     private final UUID CLIENT_ID = UUID.randomUUID();
+    private final UUID TXN_ID    = UUID.randomUUID();
 
     @BeforeEach
     void setUp() {
@@ -42,11 +43,13 @@ class NotificationServiceTest {
     void notifyTransactionCreated_sendsCorrectEmail() {
         stubOrgAndClient("Acme Corp", "raissa@test.com", "Raissa");
 
-        StepVerifier.create(service.notifyTransactionCreated(ORG_ID, "TXN-0001", "Office Supplies", "John"))
+        StepVerifier.create(service.notifyTransactionCreated(ORG_ID,
+
+                        TXN_ID, "Office Supplies", "John"))
                 .verifyComplete();
 
         verify(emailService).sendTransactionCreatedEmail(
-                "raissa@test.com", "Raissa", "Acme Corp", "TXN-0001", "Office Supplies", "John");
+                "raissa@test.com", "Raissa", "Acme Corp", TXN_ID.toString(), "Office Supplies", "John");
     }
 
     // ──────────────────────────── notifyEvidenceUploaded ─────────────────────
@@ -55,11 +58,11 @@ class NotificationServiceTest {
     void notifyEvidenceUploaded_sendsCorrectEmail() {
         stubOrgAndClient("Acme Corp", "raissa@test.com", "Raissa");
 
-        StepVerifier.create(service.notifyEvidenceUploaded(ORG_ID, "TXN-0001", "Bank Statement", "Diana"))
+        StepVerifier.create(service.notifyEvidenceUploaded(ORG_ID, TXN_ID, "Bank Statement", "Diana"))
                 .verifyComplete();
 
         verify(emailService).sendEvidenceUploadedEmail(
-                "raissa@test.com", "Raissa", "Acme Corp", "TXN-0001", "Bank Statement", "Diana");
+                "raissa@test.com", "Raissa", "Acme Corp", TXN_ID.toString(), "Bank Statement", "Diana");
     }
 
     // ──────────────────────────── notifyIssueFlagged ─────────────────────────
@@ -69,12 +72,12 @@ class NotificationServiceTest {
         stubOrgAndClient("Acme Corp", "raissa@test.com", "Raissa");
 
         StepVerifier.create(service.notifyIssueFlagged(
-                        ORG_ID, "TXN-0001", "MISSING_EVIDENCE", "No supporting documents found.", "Auditor Mike"))
+                        ORG_ID, TXN_ID, "MISSING_EVIDENCE", "No supporting documents found.", "Auditor Mike"))
                 .verifyComplete();
 
         verify(emailService).sendIssueFlaggedEmail(
                 "raissa@test.com", "Raissa", "Acme Corp",
-                "TXN-0001", "MISSING_EVIDENCE", "No supporting documents found.", "Auditor Mike");
+                TXN_ID.toString(), "MISSING_EVIDENCE", "No supporting documents found.", "Auditor Mike");
     }
 
     // ──────────────────────────── notifyIssueResolved ────────────────────────
@@ -84,12 +87,12 @@ class NotificationServiceTest {
         stubOrgAndClient("Acme Corp", "raissa@test.com", "Raissa");
 
         StepVerifier.create(service.notifyIssueResolved(
-                        ORG_ID, "TXN-0001", "Evidence reviewed and accepted.", "Diana"))
+                        ORG_ID, TXN_ID, "Evidence reviewed and accepted.", "Diana"))
                 .verifyComplete();
 
         verify(emailService).sendIssueResolvedEmail(
                 "raissa@test.com", "Raissa", "Acme Corp",
-                "TXN-0001", "Evidence reviewed and accepted.", "Diana");
+                TXN_ID.toString(), "Evidence reviewed and accepted.", "Diana");
     }
 
     // ──────────────────────────── graceful failure ───────────────────────────
@@ -98,7 +101,7 @@ class NotificationServiceTest {
     void notify_orgNotFound_completesWithoutErrorAndNoEmailSent() {
         when(orgRepo.findById(ORG_ID)).thenReturn(Mono.empty());
 
-        StepVerifier.create(service.notifyTransactionCreated(ORG_ID, "TXN-0001", "Office Supplies", "John"))
+        StepVerifier.create(service.notifyTransactionCreated(ORG_ID, TXN_ID, "Office Supplies", "John"))
                 .verifyComplete();
 
         verify(emailService, never()).sendTransactionCreatedEmail(
@@ -111,7 +114,7 @@ class NotificationServiceTest {
         when(orgRepo.findById(ORG_ID)).thenReturn(Mono.just(organisation));
         when(clientRepo.findById(CLIENT_ID)).thenReturn(Mono.empty());
 
-        StepVerifier.create(service.notifyEvidenceUploaded(ORG_ID, "TXN-0001", "Invoice", "Diana"))
+        StepVerifier.create(service.notifyEvidenceUploaded(ORG_ID, TXN_ID, "Invoice", "Diana"))
                 .verifyComplete();
 
         verify(emailService, never()).sendEvidenceUploadedEmail(
@@ -123,7 +126,7 @@ class NotificationServiceTest {
         when(orgRepo.findById(ORG_ID)).thenReturn(Mono.error(new RuntimeException("DB unavailable")));
 
         StepVerifier.create(service.notifyIssueFlagged(
-                        ORG_ID, "TXN-0001", "COMPLIANCE_ISSUE", "VAT missing", "Auditor"))
+                        ORG_ID, TXN_ID, "COMPLIANCE_ISSUE", "VAT missing", "Auditor"))
                 .verifyComplete();
     }
 

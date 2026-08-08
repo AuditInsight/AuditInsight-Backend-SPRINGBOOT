@@ -38,6 +38,8 @@ class ReviewQueueServiceTest {
 
     private final UUID ORG_ID  = UUID.randomUUID();
     private final UUID ITEM_ID = UUID.randomUUID();
+    private final UUID TXN_ID = UUID.randomUUID();
+    private final UUID TXN_ID_2 = UUID.randomUUID();
 
     @BeforeEach
     void setUp() {
@@ -49,10 +51,11 @@ class ReviewQueueServiceTest {
     @Test
     void flagIssue_auditorUser_succeeds() {
         mockActiveMember("auditor@test.com", 3L, Role.AUDITOR);
-        Transaction t = txn("TXN-0001");
-        when(txnRepo.findById("TXN-0001")).thenReturn(Mono.just(t));
+        Transaction t = txn(TXN_ID);
+        when(txnRepo
+                .findById(TXN_ID)).thenReturn(Mono.just(t));
         when(reviewRepo.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
-        when(notificationService.notifyIssueFlagged(any(), anyString(), anyString(), anyString(), anyString()))
+        when(notificationService.notifyIssueFlagged(any(), any(), anyString(), anyString(), anyString()))
                 .thenReturn(Mono.empty());
 
         StepVerifier.create(service.flagIssue("auditor@test.com", flagRequest()))
@@ -85,7 +88,7 @@ class ReviewQueueServiceTest {
     @Test
     void flagIssue_transactionNotFound_returnsError() {
         mockActiveMember("auditor@test.com", 3L, Role.AUDITOR);
-        when(txnRepo.findById("TXN-0001")).thenReturn(Mono.empty());
+        when(txnRepo.findById(TXN_ID)).thenReturn(Mono.empty());
 
         StepVerifier.create(service.flagIssue("auditor@test.com", flagRequest()))
                 .expectErrorMatches(e -> e instanceof InvalidRecord
@@ -96,9 +99,9 @@ class ReviewQueueServiceTest {
     @Test
     void flagIssue_transactionFromDifferentOrg_returnsError() {
         mockActiveMember("auditor@test.com", 3L, Role.AUDITOR);
-        Transaction t = txn("TXN-0001");
+        Transaction t = txn(TXN_ID);
         t.setOrganisationId(UUID.randomUUID()); // different org
-        when(txnRepo.findById("TXN-0001")).thenReturn(Mono.just(t));
+        when(txnRepo.findById(TXN_ID)).thenReturn(Mono.just(t));
 
         StepVerifier.create(service.flagIssue("auditor@test.com", flagRequest()))
                 .expectErrorMatches(e -> e instanceof InvalidRecord
@@ -123,8 +126,8 @@ class ReviewQueueServiceTest {
     @Test
     void listByOrg_anyActiveMember_returnsItems() {
         mockActiveMember("member@test.com", 2L, Role.MEMBER);
-        ReviewQueue rq1 = reviewQueueItem("TXN-0001", ReviewStatus.OPEN);
-        ReviewQueue rq2 = reviewQueueItem("TXN-0002", ReviewStatus.RESOLVED);
+        ReviewQueue rq1 = reviewQueueItem(TXN_ID, ReviewStatus.OPEN);
+        ReviewQueue rq2 = reviewQueueItem(TXN_ID_2, ReviewStatus.RESOLVED);
         when(reviewRepo.findAllByOrganisationId(ORG_ID)).thenReturn(Flux.just(rq1, rq2));
 
         StepVerifier.create(service.listByOrg(ORG_ID, "member@test.com"))
@@ -136,7 +139,7 @@ class ReviewQueueServiceTest {
 
     @Test
     void getItem_activeMember_returnsItem() {
-        ReviewQueue rq = reviewQueueItem("TXN-0001", ReviewStatus.OPEN);
+        ReviewQueue rq = reviewQueueItem(TXN_ID, ReviewStatus.OPEN);
         rq.setId(ITEM_ID);
         when(reviewRepo.findById(ITEM_ID)).thenReturn(Mono.just(rq));
         mockActiveMember("auditor@test.com", 3L, Role.AUDITOR);
@@ -161,12 +164,12 @@ class ReviewQueueServiceTest {
 
     @Test
     void resolveIssue_clientUser_succeeds() {
-        ReviewQueue rq = reviewQueueItem("TXN-0001", ReviewStatus.OPEN);
+        ReviewQueue rq = reviewQueueItem(TXN_ID, ReviewStatus.OPEN);
         rq.setId(ITEM_ID);
         when(reviewRepo.findById(ITEM_ID)).thenReturn(Mono.just(rq));
         mockActiveMember("client@test.com", 1L, Role.CLIENT);
         when(reviewRepo.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
-        when(notificationService.notifyIssueResolved(any(), anyString(), anyString(), anyString()))
+        when(notificationService.notifyIssueResolved(any(), any(), anyString(), anyString()))
                 .thenReturn(Mono.empty());
 
         ResolveReviewQueueRequest req = new ResolveReviewQueueRequest();
@@ -181,12 +184,12 @@ class ReviewQueueServiceTest {
 
     @Test
     void resolveIssue_memberUser_succeeds() {
-        ReviewQueue rq = reviewQueueItem("TXN-0001", ReviewStatus.OPEN);
+        ReviewQueue rq = reviewQueueItem(TXN_ID, ReviewStatus.OPEN);
         rq.setId(ITEM_ID);
         when(reviewRepo.findById(ITEM_ID)).thenReturn(Mono.just(rq));
         mockActiveMember("member@test.com", 2L, Role.MEMBER);
         when(reviewRepo.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
-        when(notificationService.notifyIssueResolved(any(), anyString(), anyString(), anyString()))
+        when(notificationService.notifyIssueResolved(any(), any(), anyString(), anyString()))
                 .thenReturn(Mono.empty());
 
         ResolveReviewQueueRequest req = new ResolveReviewQueueRequest();
@@ -200,7 +203,7 @@ class ReviewQueueServiceTest {
 
     @Test
     void resolveIssue_auditorUser_returnsForbidden() {
-        ReviewQueue rq = reviewQueueItem("TXN-0001", ReviewStatus.OPEN);
+        ReviewQueue rq = reviewQueueItem(TXN_ID, ReviewStatus.OPEN);
         rq.setId(ITEM_ID);
         when(reviewRepo.findById(ITEM_ID)).thenReturn(Mono.just(rq));
         mockActiveMember("auditor@test.com", 3L, Role.AUDITOR);
@@ -216,7 +219,7 @@ class ReviewQueueServiceTest {
 
     @Test
     void resolveIssue_alreadyResolved_returnsError() {
-        ReviewQueue rq = reviewQueueItem("TXN-0001", ReviewStatus.RESOLVED);
+        ReviewQueue rq = reviewQueueItem(TXN_ID, ReviewStatus.RESOLVED);
         rq.setId(ITEM_ID);
         when(reviewRepo.findById(ITEM_ID)).thenReturn(Mono.just(rq));
         mockActiveMember("client@test.com", 1L, Role.CLIENT);
@@ -258,7 +261,7 @@ class ReviewQueueServiceTest {
         return m;
     }
 
-    private Transaction txn(String id) {
+    private Transaction txn(UUID id) {
         Transaction t = new Transaction();
         t.setId(id);
         t.setOrganisationId(ORG_ID);
@@ -274,7 +277,7 @@ class ReviewQueueServiceTest {
         return t;
     }
 
-    private ReviewQueue reviewQueueItem(String txnId, ReviewStatus status) {
+    private ReviewQueue reviewQueueItem(UUID txnId, ReviewStatus status) {
         ReviewQueue rq = new ReviewQueue();
         rq.setId(UUID.randomUUID());
         rq.setOrganisationId(ORG_ID);
@@ -290,7 +293,7 @@ class ReviewQueueServiceTest {
     private CreateReviewQueueRequest flagRequest() {
         CreateReviewQueueRequest req = new CreateReviewQueueRequest();
         req.setOrganisationId(ORG_ID);
-        req.setTransactionId("TXN-0001");
+        req.setTransactionId(TXN_ID);
         req.setIssueType(IssueType.COMPLIANCE_ISSUE);
         req.setDescription("Missing VAT documentation.");
         return req;

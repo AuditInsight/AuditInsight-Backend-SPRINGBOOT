@@ -9,6 +9,6 @@ import java.util.UUID;
 
 public interface EvidenceRepository extends ReactiveCrudRepository<Evidence, UUID> {
     Flux<Evidence> findAllByOrganisationId(UUID organisationId);
-    Flux<Evidence> findAllByTransactionId(String transactionId);
-    Mono<Long> countByTransactionId(String transactionId);
+    Flux<Evidence> findAllByTransactionId(UUID transactionId);
+    Mono<Long> countByTransactionId(UUID transactionId);
 }

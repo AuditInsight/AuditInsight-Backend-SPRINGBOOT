@@ -53,7 +53,7 @@ public class TransactionController {
                description = "Returns a transaction with its linked evidence. All members.")
     public Mono<ResponseEntity<TransactionResponse>> get(
             Authentication auth,
-            @PathVariable String txnId) {
+            @PathVariable UUID txnId) {
         return txnService.getTransaction(txnId, auth.getName())
                 .map(ResponseEntity::ok);
     }
@@ -63,7 +63,7 @@ public class TransactionController {
                description = "Updates transaction status. CLIENT and MEMBER only.")
     public Mono<ResponseEntity<TransactionResponse>> updateStatus(
             Authentication auth,
-            @PathVariable String txnId,
+            @PathVariable UUID txnId,
             @Valid @RequestBody UpdateTransactionStatusRequest req) {
         return txnService.updateStatus(txnId, auth.getName(), req)
                 .map(ResponseEntity::ok);

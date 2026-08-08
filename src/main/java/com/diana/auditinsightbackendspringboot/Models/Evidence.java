@@ -22,7 +22,7 @@ public class Evidence {
     private UUID organisationId;
 
     @Column("transaction_id")
-    private String transactionId;
+    private UUID transactionId;
 
     @Column("document_name")
     private String documentName;

@@ -81,7 +81,7 @@ CREATE TABLE IF NOT EXISTS organisation_invitation (
 );
 
 CREATE TABLE IF NOT EXISTS transactions (
-    id              VARCHAR(20)   PRIMARY KEY,
+    id              UUID          DEFAULT RANDOM_UUID() PRIMARY KEY,
     organisation_id UUID          NOT NULL,
     name            VARCHAR(255)  NOT NULL,
     date            DATE          NOT NULL,
@@ -100,7 +100,7 @@ CREATE TABLE IF NOT EXISTS transactions (
 CREATE TABLE IF NOT EXISTS evidence (
     id              UUID          DEFAULT RANDOM_UUID() PRIMARY KEY,
     organisation_id UUID          NOT NULL,
-    transaction_id  VARCHAR(20)   NOT NULL,
+    transaction_id  UUID          NOT NULL,
     document_name   VARCHAR(255)  NOT NULL,
     folder          VARCHAR(100)  NOT NULL,
     subfolder       VARCHAR(100)  NOT NULL,
@@ -114,7 +114,7 @@ CREATE TABLE IF NOT EXISTS evidence (
 CREATE TABLE IF NOT EXISTS review_queue (
     id              UUID         DEFAULT RANDOM_UUID() PRIMARY KEY,
     organisation_id UUID         NOT NULL,
-    transaction_id  VARCHAR(20)  NOT NULL,
+    transaction_id  UUID         NOT NULL,
     issue_type      VARCHAR(30)  NOT NULL,
     description     TEXT         NOT NULL,
     status          VARCHAR(20)  NOT NULL DEFAULT 'OPEN',
