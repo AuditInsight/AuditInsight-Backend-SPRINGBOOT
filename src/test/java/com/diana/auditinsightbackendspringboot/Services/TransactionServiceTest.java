@@ -54,7 +54,7 @@ class TransactionServiceTest {
     @Test
     void createTransaction_clientUser_succeeds() {
         mockActiveMember("client@test.com", 1L, Role.CLIENT);
-        when(txnRepo.countByOrganisationId(ORG_ID)).thenReturn(Mono.just(0L));
+        when(txnRepo.nextTransactionSequence(ORG_ID)).thenReturn(Mono.just(1));
         when(txnRepo.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
         when(notificationService.notifyTransactionCreated(any(), anyString(), anyString(), anyString()))
                 .thenReturn(Mono.empty());
@@ -71,7 +71,7 @@ class TransactionServiceTest {
     @Test
     void createTransaction_memberUser_succeeds() {
         mockActiveMember("member@test.com", 2L, Role.MEMBER);
-        when(txnRepo.countByOrganisationId(ORG_ID)).thenReturn(Mono.just(5L));
+        when(txnRepo.nextTransactionSequence(ORG_ID)).thenReturn(Mono.just(6));
         when(txnRepo.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
         when(notificationService.notifyTransactionCreated(any(), anyString(), anyString(), anyString()))
                 .thenReturn(Mono.empty());
@@ -119,7 +119,7 @@ class TransactionServiceTest {
     void createTransaction_ngoOrg_withDonorAndBudgetLine_succeeds() {
         when(organisationRepo.findById(ORG_ID)).thenReturn(Mono.just(organisation(ORG_ID, OrganisationType.NGO)));
         mockActiveMember("client@test.com", 1L, Role.CLIENT);
-        when(txnRepo.countByOrganisationId(ORG_ID)).thenReturn(Mono.just(0L));
+        when(txnRepo.nextTransactionSequence(ORG_ID)).thenReturn(Mono.just(1));
         when(txnRepo.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
         when(notificationService.notifyTransactionCreated(any(), anyString(), anyString(), anyString()))
                 .thenReturn(Mono.empty());
@@ -137,7 +137,7 @@ class TransactionServiceTest {
     @Test
     void createTransaction_privateOrg_donorAndBudgetLineNotRequired_succeeds() {
         mockActiveMember("client@test.com", 1L, Role.CLIENT);
-        when(txnRepo.countByOrganisationId(ORG_ID)).thenReturn(Mono.just(0L));
+        when(txnRepo.nextTransactionSequence(ORG_ID)).thenReturn(Mono.just(1));
         when(txnRepo.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
         when(notificationService.notifyTransactionCreated(any(), anyString(), anyString(), anyString()))
                 .thenReturn(Mono.empty());

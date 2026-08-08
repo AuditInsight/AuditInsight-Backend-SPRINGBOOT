@@ -151,12 +151,16 @@ public class PaymentService {
                     if (payment.getStatus() != PaymentStatus.PENDING) {
                         return Mono.just(payment);
                     }
-                    return pawaPayService.getStatus(payment.getId())
-                            .flatMap(result -> switch (result.status()) {
-                                case SUCCESSFUL -> markSuccessfulAndActivate(payment);
-                                case FAILED -> markFailed(payment, result.failureReason());
-                                case PENDING -> Mono.just(payment);
-                            });
+                    return switch (payment.getProvider()) {
+                        case MOMO -> pawaPayService.getStatus(payment.getId())
+                                .flatMap(result -> switch (result.status()) {
+                                    case SUCCESSFUL -> markSuccessfulAndActivate(payment);
+                                    case FAILED -> markFailed(payment, result.failureReason());
+                                    case PENDING -> Mono.just(payment);
+                                });
+                        case CARD -> flutterwaveService.verifyByTxRef(payment.getProviderReference())
+                                .flatMap(verification -> resolveVerifiedOutcome(payment, verification));
+                    };
                 });
     }
 
@@ -186,10 +190,31 @@ public class PaymentService {
                         return Mono.empty();
                     }
                     return flutterwaveService.verifyTransaction(transactionId)
-                            .flatMap(verification -> verification.successful()
-                                    ? markSuccessfulAndActivate(payment).then()
-                                    : markFailed(payment, "Flutterwave reported status: " + verification.status()).then());
+                            .flatMap(verification -> resolveVerifiedOutcome(payment, verification))
+                            .then();
                 });
+    }
+
+    /**
+     * Flutterwave's transaction id in a webhook body is attacker-controlled — a forged webhook
+     * could reference someone else's genuinely-successful transaction. Re-verifying with
+     * Flutterwave only proves *some* transaction succeeded; it must also match this payment's
+     * own tx_ref/amount/currency before we trust it enough to activate a subscription.
+     */
+    private Mono<Payment> resolveVerifiedOutcome(Payment payment, FlutterwaveService.VerificationResult verification) {
+        if ("pending".equalsIgnoreCase(verification.status())) {
+            return Mono.just(payment);
+        }
+        if (!verification.successful()) {
+            return markFailed(payment, "Flutterwave reported status: " + verification.status());
+        }
+        if (!payment.getProviderReference().equals(verification.txRef())
+                || verification.amount() == null
+                || verification.amount().compareTo(payment.getChargedAmount()) != 0
+                || !payment.getChargedCurrency().equalsIgnoreCase(verification.currency())) {
+            return markFailed(payment, "Verified transaction did not match this payment (tx_ref/amount/currency mismatch)");
+        }
+        return markSuccessfulAndActivate(payment);
     }
 
     public Mono<Subscription> getActiveSubscription(UUID organisationId, String email) {
