@@ -50,6 +50,11 @@ public class FlutterwaveService {
                 .subscribeOn(Schedulers.boundedElastic());
     }
 
+    public Mono<VerificationResult> verifyByTxRef(String txRef) {
+        return Mono.fromCallable(() -> doVerifyByTxRef(txRef))
+                .subscribeOn(Schedulers.boundedElastic());
+    }
+
     private HttpHeaders authHeaders() {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(secretKey);
@@ -85,7 +90,6 @@ public class FlutterwaveService {
         return String.valueOf(data.get("link"));
     }
 
-    @SuppressWarnings("unchecked")
     private VerificationResult doVerifyTransaction(String transactionId) {
         ResponseEntity<Map> response;
         try {
@@ -94,14 +98,29 @@ public class FlutterwaveService {
         } catch (Exception e) {
             throw new RuntimeException("Failed to verify Flutterwave transaction: " + e.getMessage(), e);
         }
+        return parseVerificationResponse(response, "Flutterwave verify");
+    }
 
+    private VerificationResult doVerifyByTxRef(String txRef) {
+        ResponseEntity<Map> response;
+        try {
+            response = restTemplate.exchange(baseUrl + "/transactions/verify_by_reference?tx_ref=" + txRef,
+                    HttpMethod.GET, new HttpEntity<>(authHeaders()), Map.class);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to verify Flutterwave transaction by reference: " + e.getMessage(), e);
+        }
+        return parseVerificationResponse(response, "Flutterwave verify_by_reference");
+    }
+
+    @SuppressWarnings("unchecked")
+    private VerificationResult parseVerificationResponse(ResponseEntity<Map> response, String context) {
         Map<String, Object> responseBody = response.getBody();
         if (!response.getStatusCode().is2xxSuccessful() || responseBody == null) {
-            throw new RuntimeException("Flutterwave verify returned HTTP " + response.getStatusCode());
+            throw new RuntimeException(context + " returned HTTP " + response.getStatusCode());
         }
         Map<String, Object> data = (Map<String, Object>) responseBody.get("data");
         if (data == null) {
-            throw new RuntimeException("Flutterwave verify response missing data");
+            throw new RuntimeException(context + " response missing data");
         }
 
         String status = String.valueOf(data.get("status"));

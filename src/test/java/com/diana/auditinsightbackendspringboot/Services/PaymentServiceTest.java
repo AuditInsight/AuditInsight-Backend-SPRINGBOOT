@@ -289,6 +289,8 @@ class PaymentServiceTest {
         payment.setProvider(PaymentProvider.CARD);
         payment.setStatus(PaymentStatus.PENDING);
         payment.setProviderReference("AI-1");
+        payment.setChargedAmount(new BigDecimal("29.00"));
+        payment.setChargedCurrency("USD");
 
         when(flutterwaveService.isValidWebhookSignature("good-hash")).thenReturn(true);
         when(paymentRepository.findByProviderReference("AI-1")).thenReturn(Mono.just(payment));
@@ -303,6 +305,32 @@ class PaymentServiceTest {
                 .verifyComplete();
 
         verify(activationService, times(1)).activateFromPayment(any());
+    }
+
+    @Test
+    void handleFlutterwaveWebhook_verifiedTransactionBelongsToDifferentPayment_marksFailedWithoutActivating() {
+        // Forged webhook: tx_ref points at this payment, but the Flutterwave transaction id in the
+        // payload actually belongs to a different (genuinely successful) transaction/amount.
+        Payment payment = new Payment();
+        payment.setId(UUID.randomUUID());
+        payment.setOrganisationId(orgId);
+        payment.setProvider(PaymentProvider.CARD);
+        payment.setStatus(PaymentStatus.PENDING);
+        payment.setProviderReference("AI-1");
+        payment.setChargedAmount(new BigDecimal("29.00"));
+        payment.setChargedCurrency("USD");
+
+        when(flutterwaveService.isValidWebhookSignature("good-hash")).thenReturn(true);
+        when(paymentRepository.findByProviderReference("AI-1")).thenReturn(Mono.just(payment));
+        when(flutterwaveService.verifyTransaction("999")).thenReturn(Mono.just(
+                new FlutterwaveService.VerificationResult(true, "successful", "SOMEONE-ELSES-REF", new BigDecimal("1.00"), "USD")));
+        when(paymentRepository.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
+
+        StepVerifier.create(paymentService.handleFlutterwaveWebhook("good-hash", webhookPayload("AI-1", "999")))
+                .verifyComplete();
+
+        verify(activationService, never()).activateFromPayment(any());
+        org.assertj.core.api.Assertions.assertThat(payment.getStatus()).isEqualTo(PaymentStatus.FAILED);
     }
 
     @Test

@@ -56,8 +56,8 @@ public class TransactionService {
 
 
     private Mono<String> generateTxnId(UUID orgId) {
-        return txnRepo.countByOrganisationId(orgId)
-                .map(count -> String.format("TXN-%04d", count + 1));
+        return txnRepo.nextTransactionSequence(orgId)
+                .map(seq -> String.format("TXN-%04d", seq));
     }
 
 
