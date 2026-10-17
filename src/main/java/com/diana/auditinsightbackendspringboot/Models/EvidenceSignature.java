@@ -30,6 +30,9 @@ public class EvidenceSignature {
     @Column("signer_name")
     private String signerName;
 
+    @Column("signer_title")
+    private String signerTitle;
+
     @Column("typed_name")
     private String typedName;
 

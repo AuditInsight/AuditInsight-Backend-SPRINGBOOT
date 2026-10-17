@@ -3,9 +3,12 @@ package com.diana.auditinsightbackendspringboot.Services;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.RestTemplate;
 
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -16,7 +19,17 @@ import java.util.UUID;
 public class EmailService {
     private static final String BREVO_API_URL = "https://api.brevo.com/v3/smtp/email";
 
-    private final RestTemplate restTemplate = new RestTemplate();
+    private static final int MAX_ATTEMPTS = 3;
+    private static final long RETRY_DELAY_MS = 1000;
+
+    private final RestTemplate restTemplate = buildRestTemplate();
+
+    private static RestTemplate buildRestTemplate() {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(Duration.ofSeconds(10));
+        factory.setReadTimeout(Duration.ofSeconds(20));
+        return new RestTemplate(factory);
+    }
 
     @Value("${BREVO_API}")
     private String brevoApiKey;
@@ -28,33 +41,51 @@ public class EmailService {
     private String fromName;
 
     public void sendEmail(String to, String subject, String htmlContent) {
-        try {
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_JSON);
-            headers.set("api-key", brevoApiKey);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set("api-key", brevoApiKey);
+        // Don't reuse a keep-alive connection Brevo may already have closed ("Unexpected end of file from server").
+        headers.set(HttpHeaders.CONNECTION, "close");
 
-            Map<String, Object> payload = new HashMap<>();
-            payload.put("sender", Map.of("email", fromEmail, "name", fromName));
-            payload.put("to", List.of(Map.of("email", to)));
-            payload.put("subject", subject);
-            payload.put("htmlContent", htmlContent);
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("sender", Map.of("email", fromEmail, "name", fromName));
+        payload.put("to", List.of(Map.of("email", to)));
+        payload.put("subject", subject);
+        payload.put("htmlContent", htmlContent);
 
-            HttpEntity<Map<String, Object>> request = new HttpEntity<>(payload, headers);
+        HttpEntity<Map<String, Object>> request = new HttpEntity<>(payload, headers);
 
-            ResponseEntity<String> response = restTemplate.exchange(
-                    BREVO_API_URL, HttpMethod.POST, request, String.class);
-
-            if (response.getStatusCode().is2xxSuccessful()) {
-                log.info("Email sent to {}", to);
-            } else {
-                log.error("Brevo error: {}", response.getBody());
+        for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            try {
+                ResponseEntity<String> response = restTemplate.exchange(
+                        BREVO_API_URL, HttpMethod.POST, request, String.class);
+                if (response.getStatusCode().is2xxSuccessful()) {
+                    log.info("Email sent to {}", to);
+                } else {
+                    log.error("Brevo error for {}: HTTP {} {}", to, response.getStatusCode(), response.getBody());
+                }
+                return;
+            } catch (HttpStatusCodeException e) {
+                // 4xx means Brevo rejected the request (bad key, unverified sender, ...): retrying won't help.
+                log.error("Brevo rejected email to {} (attempt {}/{}): HTTP {} {}",
+                        to, attempt, MAX_ATTEMPTS, e.getStatusCode().value(), e.getResponseBodyAsString());
+                if (!e.getStatusCode().is5xxServerError() || attempt == MAX_ATTEMPTS) {
+                    return;
+                }
+            } catch (Exception e) {
+                log.warn("Failed to send email to {} (attempt {}/{}): {}", to, attempt, MAX_ATTEMPTS, e.getMessage());
+                if (attempt == MAX_ATTEMPTS) {
+                    log.error("Giving up sending email to {}", to, e);
+                    return;
+                }
             }
-
-        } catch (Exception e) {
-            log.error("Failed to send email to {}", to, e);
+            try {
+                Thread.sleep(RETRY_DELAY_MS * attempt);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                return;
+            }
         }
-
-
     }
 
     public void sendVerificationEmail(String email, String name, String otp) {
@@ -363,6 +394,33 @@ public class EmailService {
                   </div>
                 </body></html>""", clientName, orgName, txnId, resolutionNote, resolvedByName);
         sendEmail(email, "Issue Resolved for Transaction " + txnId, html);
+    }
+
+    public void sendSignatureRequestEmail(String email, String name, String requesterName,
+                                          String documentName, String message) {
+        if (email == null) {
+            log.error("Cannot send signature request email: missing email");
+            return;
+        }
+        String note = message == null || message.isBlank() ? ""
+                : "<p style='background:#f4f4f4;padding:10px;border-radius:4px;'>“" + escapeHtml(message) + "”</p>";
+        String html = String.format("""
+                <html><body style='font-family:Arial,sans-serif;'>
+                  <div style='max-width:600px;margin:auto;padding:20px;border:1px solid #ddd;'>
+                    <h2 style='color:#2c3e50;'>Signature requested</h2>
+                    <p>Hello <b>%s</b>,</p>
+                    <p><b>%s</b> has asked you to sign the document <b>%s</b> on AuditInsight.</p>
+                    %s
+                    <p>Log in to AuditInsight, open the document and sign it from the Signatures section.</p>
+                    <small>This is an automated notification from AuditInsight.</small>
+                  </div>
+                </body></html>""", escapeHtml(name != null ? name : email), escapeHtml(requesterName),
+                escapeHtml(documentName), note);
+        sendEmail(email, requesterName + " asked you to sign " + documentName, html);
+    }
+
+    private static String escapeHtml(String s) {
+        return s == null ? "" : s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 
     public void sendPasswordResetEmail(String email, String name, String otp) {

@@ -13,6 +13,7 @@ public class SignatureResponse {
     private UUID evidenceId;
     private Long signerId;
     private String signerName;
+    private String signerTitle;
     private String typedName;
     private String signatureImage;
     private LocalDateTime signedAt;
