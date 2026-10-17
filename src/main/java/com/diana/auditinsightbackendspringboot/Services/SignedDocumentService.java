@@ -126,7 +126,7 @@ public class SignedDocumentService {
                 PDPage lastPage = null;
                 Float contentBottom = null;
                 if (type.equals("png") || type.equals("jpg") || type.equals("jpeg")) {
-                    Placed placed = addImagePage(doc, bytes, ev.getDocumentName());
+                    Placed placed = addImagePage(doc, bytes, ev.getDocumentName(), signers.size());
                     lastPage = placed.page();
                     contentBottom = placed.contentBottomY();
                 } else if (type.equals("pdf") && doc.getNumberOfPages() > 0) {
@@ -156,12 +156,16 @@ public class SignedDocumentService {
     /** Places the image on its own A4 page; returns the page and the y of the image's bottom edge. */
     private record Placed(PDPage page, float contentBottomY) {}
 
-    private Placed addImagePage(PDDocument doc, byte[] imageBytes, String documentName) throws IOException {
+    private Placed addImagePage(PDDocument doc, byte[] imageBytes, String documentName, int signerCount) throws IOException {
         PDImageXObject image = PDImageXObject.createFromByteArray(doc, imageBytes, documentName);
         PDPage page = new PDPage(PDRectangle.A4);
         doc.addPage(page);
         float maxW = page.getMediaBox().getWidth() - 2 * MARGIN;
-        float maxH = page.getMediaBox().getHeight() - 2 * MARGIN;
+        // Leave room under the image for the signatures (heading + every signer row), but never shrink it below 40% of the page.
+        int rows = (signerCount + columnsFor(page.getMediaBox().getWidth()) - 1) / columnsFor(page.getMediaBox().getWidth());
+        float reserved = GAP_BELOW_CONTENT + INLINE_HEADER_HEIGHT + rows * BLOCK_HEIGHT + BOTTOM_MARGIN;
+        float fullHeight = page.getMediaBox().getHeight() - 2 * MARGIN;
+        float maxH = Math.max(fullHeight * 0.4f, page.getMediaBox().getHeight() - MARGIN - reserved);
         float scale = Math.min(1f, Math.min(maxW / image.getWidth(), maxH / image.getHeight()));
         float w = image.getWidth() * scale;
         float h = image.getHeight() * scale;
