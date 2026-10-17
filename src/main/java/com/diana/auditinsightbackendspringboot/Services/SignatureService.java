@@ -22,6 +22,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 import java.time.LocalDateTime;
 import java.util.LinkedHashSet;
@@ -45,19 +46,26 @@ public class SignatureService {
     private final OrganisationMemberRepository memberRepo;
     private final UserRepository userRepo;
     private final OrgAccessService orgAccessService;
+    private final EmailService emailService;
 
     public SignatureService(EvidenceRepository evidenceRepo,
                             EvidenceSignatureRepository signatureRepo,
                             SignatureRequestRepository requestRepo,
                             OrganisationMemberRepository memberRepo,
                             UserRepository userRepo,
-                            OrgAccessService orgAccessService) {
+                            OrgAccessService orgAccessService,
+                            EmailService emailService) {
         this.evidenceRepo = evidenceRepo;
         this.signatureRepo = signatureRepo;
         this.requestRepo = requestRepo;
         this.memberRepo = memberRepo;
         this.userRepo = userRepo;
         this.orgAccessService = orgAccessService;
+        this.emailService = emailService;
+    }
+
+    private static String blankToNull(String v) {
+        return v == null || v.isBlank() ? null : v.trim();
     }
 
     private Mono<Evidence> findEvidence(UUID evidenceId) {
@@ -70,6 +78,8 @@ public class SignatureService {
     public Mono<SignatureResponse> sign(String email, UUID evidenceId, SignEvidenceRequest body) {
         String typedName = body.getTypedName() == null || body.getTypedName().isBlank()
                 ? null : body.getTypedName().trim();
+        String fullName = blankToNull(body.getFullName());
+        String title = blankToNull(body.getTitle());
         String image = body.getSignatureImage() == null || body.getSignatureImage().isBlank()
                 ? null : body.getSignatureImage();
         if (image != null && !image.startsWith(PNG_DATA_URL_PREFIX)) {
@@ -82,11 +92,12 @@ public class SignatureService {
                     return signatureRepo.findByEvidenceIdAndSignerId(evidenceId, user.getId())
                             .flatMap(existing -> Mono.<SignatureResponse>error(
                                     new InvalidRecord("You have already signed this document")))
-                            .switchIfEmpty(Mono.defer(() -> persistSignature(ev, user, typedName, image)));
+                            .switchIfEmpty(Mono.defer(() -> persistSignature(ev, user, fullName, title, typedName, image)));
                 }));
     }
 
-    private Mono<SignatureResponse> persistSignature(Evidence ev, User user, String typedName, String image) {
+    private Mono<SignatureResponse> persistSignature(Evidence ev, User user, String fullName, String title,
+                                                     String typedName, String image) {
         return requestRepo.findByEvidenceIdAndRequestedUserIdAndStatus(
                         ev.getId(), user.getId(), SignatureRequestStatus.PENDING)
                 .map(Optional::of)
@@ -97,7 +108,8 @@ public class SignatureService {
                     s.setEvidenceId(ev.getId());
                     s.setOrganisationId(ev.getOrganisationId());
                     s.setSignerId(user.getId());
-                    s.setSignerName(user.getFullName());
+                    s.setSignerName(fullName != null ? fullName : user.getFullName());
+                    s.setSignerTitle(title);
                     s.setTypedName(typedName);
                     s.setSignatureImage(image);
                     s.setSignedAt(now);
@@ -121,10 +133,31 @@ public class SignatureService {
                                                                   RequestSignatureRequest body) {
         return findEvidence(evidenceId).flatMap(ev ->
                 orgAccessService.resolveGatedMember(ev.getOrganisationId(), email).flatMap(ctx ->
-                        Flux.fromIterable(new LinkedHashSet<>(body.getUserIds()))
-                                .concatMap(uid -> createRequest(ev, ctx.user(), uid, body.getMessage()))
-                                .map(r -> toResponse(r, ev.getDocumentName()))
-                                .collectList()));
+                        resolveTargetIds(body).flatMap(ids ->
+                                Flux.fromIterable(ids)
+                                        .concatMap(uid -> createRequest(ev, ctx.user(), uid, body.getMessage()))
+                                        .map(r -> toResponse(r, ev.getDocumentName()))
+                                        .collectList())));
+    }
+
+    /** Merges the picked member ids with the typed emails (resolved to user ids), de-duplicated. */
+    private Mono<LinkedHashSet<Long>> resolveTargetIds(RequestSignatureRequest body) {
+        LinkedHashSet<Long> ids = new LinkedHashSet<>();
+        if (body.getUserIds() != null) ids.addAll(body.getUserIds());
+        List<String> emails = body.getEmails() == null ? List.of() : body.getEmails();
+        if (ids.isEmpty() && emails.isEmpty()) {
+            return Mono.error(new InvalidRecord("select at least one member or enter an email address"));
+        }
+        return Flux.fromIterable(new LinkedHashSet<>(emails))
+                .concatMap(e -> userRepo.findByUsername(e.trim())
+                        .switchIfEmpty(Mono.error(new InvalidRecord(
+                                e.trim() + " is not a member of this organisation"))))
+                .map(User::getId)
+                .collectList()
+                .map(resolved -> {
+                    ids.addAll(resolved);
+                    return ids;
+                });
     }
 
     private Mono<SignatureRequest> createRequest(Evidence ev, User requester, Long targetId, String message) {
@@ -155,7 +188,13 @@ public class SignatureService {
                                     r.setMessage(message == null || message.isBlank() ? null : message.trim());
                                     r.setStatus(SignatureRequestStatus.PENDING);
                                     r.setCreatedAt(LocalDateTime.now());
-                                    return requestRepo.save(r);
+                                    return requestRepo.save(r).doOnSuccess(saved ->
+                                            Mono.fromRunnable(() -> emailService.sendSignatureRequestEmail(
+                                                            target.getUsername(), target.getFullName(),
+                                                            requester.getFullName(), ev.getDocumentName(),
+                                                            saved.getMessage()))
+                                                    .subscribeOn(Schedulers.boundedElastic())
+                                                    .subscribe());
                                 })))));
     }
 
@@ -223,6 +262,7 @@ public class SignatureService {
         r.setEvidenceId(s.getEvidenceId());
         r.setSignerId(s.getSignerId());
         r.setSignerName(s.getSignerName());
+        r.setSignerTitle(s.getSignerTitle());
         r.setTypedName(s.getTypedName());
         r.setSignatureImage(s.getSignatureImage());
         r.setSignedAt(s.getSignedAt());

@@ -396,6 +396,33 @@ public class EmailService {
         sendEmail(email, "Issue Resolved for Transaction " + txnId, html);
     }
 
+    public void sendSignatureRequestEmail(String email, String name, String requesterName,
+                                          String documentName, String message) {
+        if (email == null) {
+            log.error("Cannot send signature request email: missing email");
+            return;
+        }
+        String note = message == null || message.isBlank() ? ""
+                : "<p style='background:#f4f4f4;padding:10px;border-radius:4px;'>“" + escapeHtml(message) + "”</p>";
+        String html = String.format("""
+                <html><body style='font-family:Arial,sans-serif;'>
+                  <div style='max-width:600px;margin:auto;padding:20px;border:1px solid #ddd;'>
+                    <h2 style='color:#2c3e50;'>Signature requested</h2>
+                    <p>Hello <b>%s</b>,</p>
+                    <p><b>%s</b> has asked you to sign the document <b>%s</b> on AuditInsight.</p>
+                    %s
+                    <p>Log in to AuditInsight, open the document and sign it from the Signatures section.</p>
+                    <small>This is an automated notification from AuditInsight.</small>
+                  </div>
+                </body></html>""", escapeHtml(name != null ? name : email), escapeHtml(requesterName),
+                escapeHtml(documentName), note);
+        sendEmail(email, requesterName + " asked you to sign " + documentName, html);
+    }
+
+    private static String escapeHtml(String s) {
+        return s == null ? "" : s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+    }
+
     public void sendPasswordResetEmail(String email, String name, String otp) {
         if (email == null) {
             log.error("Cannot send password reset email: missing email");
