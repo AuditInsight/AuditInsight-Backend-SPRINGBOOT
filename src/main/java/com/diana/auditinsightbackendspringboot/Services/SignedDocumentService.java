@@ -69,7 +69,7 @@ public class SignedDocumentService {
     }
 
     /** One signer as printed on the signature page. */
-    private record Signer(String name, String email, String typedName, byte[] image, String signedAt) {}
+    private record Signer(String name, String title, String email, String typedName, byte[] image, String signedAt) {}
 
     public Mono<SignedDocument> build(String requesterEmail, UUID evidenceId) {
         return evidenceRepo.findById(evidenceId)
@@ -95,7 +95,7 @@ public class SignedDocumentService {
     }
 
     private Signer toSigner(EvidenceSignature s, String email) {
-        return new Signer(s.getSignerName(), email, s.getTypedName(), decodeImage(s.getSignatureImage()),
+        return new Signer(s.getSignerName(), s.getSignerTitle(), email, s.getTypedName(), decodeImage(s.getSignatureImage()),
                 s.getSignedAt() == null ? "" : TIME_FORMAT.format(s.getSignedAt()));
     }
 
@@ -207,9 +207,16 @@ public class SignedDocumentService {
         cs.lineTo(MARGIN + sigW + 40, lineY);
         cs.stroke();
 
-        text(cs, bold, 11, MARGIN, lineY - 15, s.name());
-        text(cs, regular, 10, MARGIN, lineY - 29, s.email());
-        text(cs, regular, 9, MARGIN, lineY - 42, "Signed on " + s.signedAt());
+        float textY = lineY - 15;
+        text(cs, bold, 11, MARGIN, textY, s.name());
+        if (s.title() != null && !s.title().isBlank()) {
+            textY -= 14;
+            text(cs, regular, 10, MARGIN, textY, s.title());
+        }
+        textY -= 14;
+        text(cs, regular, 10, MARGIN, textY, s.email());
+        textY -= 13;
+        text(cs, regular, 9, MARGIN, textY, "Signed on " + s.signedAt());
     }
 
     private void text(PDPageContentStream cs, PDType1Font font, float size, float x, float y, String value) throws IOException {
