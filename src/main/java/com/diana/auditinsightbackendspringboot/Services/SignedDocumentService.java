@@ -15,12 +15,14 @@ import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.font.PDType1Font;
 import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
 import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
+import org.apache.pdfbox.rendering.PDFRenderer;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 import java.awt.Color;
+import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.time.format.DateTimeFormatter;
@@ -48,6 +50,10 @@ public class SignedDocumentService {
     private static final String PNG_DATA_URL_PREFIX = "data:image/png;base64,";
     private static final float MARGIN = 50f;
     private static final float BLOCK_HEIGHT = 120f;
+    private static final float COLUMN_WIDTH = 255f;
+    private static final float BOTTOM_MARGIN = 40f;
+    private static final float GAP_BELOW_CONTENT = 18f;
+    private static final float INLINE_HEADER_HEIGHT = 34f;
     private static final int MAX_DOWNLOAD_BYTES = 30 * 1024 * 1024;
 
     private final EvidenceRepository evidenceRepo;
@@ -117,10 +123,17 @@ public class SignedDocumentService {
 
         return original.flatMap(bytes -> Mono.fromCallable(() -> {
             try (PDDocument doc = type.equals("pdf") && bytes.length > 0 ? Loader.loadPDF(bytes) : new PDDocument()) {
+                PDPage lastPage = null;
+                Float contentBottom = null;
                 if (type.equals("png") || type.equals("jpg") || type.equals("jpeg")) {
-                    addImagePage(doc, bytes, ev.getDocumentName());
+                    Placed placed = addImagePage(doc, bytes, ev.getDocumentName(), signers.size());
+                    lastPage = placed.page();
+                    contentBottom = placed.contentBottomY();
+                } else if (type.equals("pdf") && doc.getNumberOfPages() > 0) {
+                    lastPage = doc.getPage(doc.getNumberOfPages() - 1);
+                    contentBottom = lastPageContentBottom(doc);
                 }
-                addSignaturePages(doc, ev.getDocumentName(), signers);
+                addSignaturePages(doc, ev.getDocumentName(), signers, lastPage, contentBottom);
                 ByteArrayOutputStream out = new ByteArrayOutputStream();
                 doc.save(out);
                 String name = stampable ? baseName + "-signed.pdf" : baseName + "-signatures.pdf";
@@ -140,21 +153,68 @@ public class SignedDocumentService {
 
     // ── PDF drawing ───────────────────────────────────────────────────────────────
 
-    private void addImagePage(PDDocument doc, byte[] imageBytes, String documentName) throws IOException {
+    /** Places the image on its own A4 page; returns the page and the y of the image's bottom edge. */
+    private record Placed(PDPage page, float contentBottomY) {}
+
+    private Placed addImagePage(PDDocument doc, byte[] imageBytes, String documentName, int signerCount) throws IOException {
         PDImageXObject image = PDImageXObject.createFromByteArray(doc, imageBytes, documentName);
         PDPage page = new PDPage(PDRectangle.A4);
         doc.addPage(page);
         float maxW = page.getMediaBox().getWidth() - 2 * MARGIN;
-        float maxH = page.getMediaBox().getHeight() - 2 * MARGIN;
+        // Leave room under the image for the signatures (heading + every signer row), but never shrink it below 40% of the page.
+        int rows = (signerCount + columnsFor(page.getMediaBox().getWidth()) - 1) / columnsFor(page.getMediaBox().getWidth());
+        float reserved = GAP_BELOW_CONTENT + INLINE_HEADER_HEIGHT + rows * BLOCK_HEIGHT + BOTTOM_MARGIN;
+        float fullHeight = page.getMediaBox().getHeight() - 2 * MARGIN;
+        float maxH = Math.max(fullHeight * 0.4f, page.getMediaBox().getHeight() - MARGIN - reserved);
         float scale = Math.min(1f, Math.min(maxW / image.getWidth(), maxH / image.getHeight()));
         float w = image.getWidth() * scale;
         float h = image.getHeight() * scale;
+        float bottom = page.getMediaBox().getHeight() - MARGIN - h;
         try (PDPageContentStream cs = new PDPageContentStream(doc, page)) {
-            cs.drawImage(image, (page.getMediaBox().getWidth() - w) / 2, page.getMediaBox().getHeight() - MARGIN - h, w, h);
+            cs.drawImage(image, (page.getMediaBox().getWidth() - w) / 2, bottom, w, h);
+        }
+        return new Placed(page, bottom);
+    }
+
+    /**
+     * Finds where the last page's content ends by rendering it small and scanning for the lowest non-white row.
+     * Returns the y (PDF coordinates, origin bottom-left) of the bottom of the content, or null when the page
+     * can't be analysed (rotated page, render failure) — callers then simply start a new page.
+     */
+    private Float lastPageContentBottom(PDDocument doc) {
+        try {
+            int index = doc.getNumberOfPages() - 1;
+            PDPage page = doc.getPage(index);
+            if (page.getRotation() != 0) return null;
+            float scale = 0.7f;
+            BufferedImage img = new PDFRenderer(doc).renderImage(index, scale);
+            PDRectangle box = page.getCropBox();
+            int lowest = -1;
+            for (int row = img.getHeight() - 1; row >= 0 && lowest < 0; row--) {
+                for (int x = 0; x < img.getWidth(); x++) {
+                    int rgb = img.getRGB(x, row);
+                    int r = (rgb >> 16) & 0xFF, g = (rgb >> 8) & 0xFF, b = rgb & 0xFF;
+                    if (r < 245 || g < 245 || b < 245) {
+                        lowest = row;
+                        break;
+                    }
+                }
+            }
+            if (lowest < 0) return box.getUpperRightY() - MARGIN; // blank page
+            return box.getUpperRightY() - (lowest + 1) / scale;
+        } catch (Exception e) {
+            log.warn("Could not measure the last page, adding a separate signature page: {}", e.getMessage());
+            return null;
         }
     }
 
-    private void addSignaturePages(PDDocument doc, String documentName, List<Signer> signers) throws IOException {
+    /**
+     * Draws the signature blocks. When {@code existingPage} is given and enough room is left below its content
+     * ({@code contentBottomY}), the first signatures go on that same page; only when it is full does it continue
+     * on new pages.
+     */
+    private void addSignaturePages(PDDocument doc, String documentName, List<Signer> signers,
+                                   PDPage existingPage, Float contentBottomY) throws IOException {
         PDType1Font bold = new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD);
         PDType1Font regular = new PDType1Font(Standard14Fonts.FontName.HELVETICA);
         PDType1Font script = new PDType1Font(Standard14Fonts.FontName.TIMES_ITALIC);
@@ -162,28 +222,58 @@ public class SignedDocumentService {
         PDPage page = null;
         PDPageContentStream cs = null;
         float y = 0;
+        int column = 0;
+        int columns = 1;
         try {
+            if (existingPage != null && contentBottomY != null) {
+                float top = contentBottomY - GAP_BELOW_CONTENT;
+                float pageWidth = existingPage.getCropBox().getWidth();
+                if (top - INLINE_HEADER_HEIGHT - BLOCK_HEIGHT >= BOTTOM_MARGIN) {
+                    page = existingPage;
+                    cs = new PDPageContentStream(doc, page, PDPageContentStream.AppendMode.APPEND, true, true);
+                    columns = columnsFor(pageWidth);
+                    cs.setStrokingColor(Color.LIGHT_GRAY);
+                    cs.setLineWidth(0.6f);
+                    cs.moveTo(MARGIN, top);
+                    cs.lineTo(pageWidth - MARGIN, top);
+                    cs.stroke();
+                    text(cs, bold, 12, MARGIN, top - 18, "Signatures");
+                    y = top - INLINE_HEADER_HEIGHT;
+                }
+            }
+
             for (Signer s : signers) {
-                if (page == null || y - BLOCK_HEIGHT < MARGIN) {
+                boolean needNewPage = page == null || (column == 0 && y - BLOCK_HEIGHT < BOTTOM_MARGIN);
+                if (needNewPage) {
                     if (cs != null) cs.close();
                     page = new PDPage(PDRectangle.A4);
                     doc.addPage(page);
                     cs = new PDPageContentStream(doc, page);
+                    columns = columnsFor(page.getMediaBox().getWidth());
+                    column = 0;
                     y = page.getMediaBox().getHeight() - MARGIN;
                     text(cs, bold, 16, MARGIN, y, "Signatures");
                     y -= 18;
                     text(cs, regular, 9, MARGIN, y, "Document: " + documentName);
                     y -= 30;
                 }
-                drawSigner(doc, cs, s, y, page.getMediaBox().getWidth(), bold, regular, script);
-                y -= BLOCK_HEIGHT;
+                drawSigner(doc, cs, s, MARGIN + column * COLUMN_WIDTH, y, bold, regular, script);
+                column++;
+                if (column >= columns) {
+                    column = 0;
+                    y -= BLOCK_HEIGHT;
+                }
             }
         } finally {
             if (cs != null) cs.close();
         }
     }
 
-    private void drawSigner(PDDocument doc, PDPageContentStream cs, Signer s, float top, float pageWidth,
+    private int columnsFor(float pageWidth) {
+        return pageWidth - 2 * MARGIN >= 2 * COLUMN_WIDTH - 20 ? 2 : 1;
+    }
+
+    private void drawSigner(PDDocument doc, PDPageContentStream cs, Signer s, float x, float top,
                             PDType1Font bold, PDType1Font regular, PDType1Font script) throws IOException {
         float sigW = 190f;
         float lineY = top - 62;
@@ -192,31 +282,31 @@ public class SignedDocumentService {
             try {
                 PDImageXObject img = PDImageXObject.createFromByteArray(doc, s.image(), "signature");
                 float scale = Math.min(sigW / img.getWidth(), 52f / img.getHeight());
-                cs.drawImage(img, MARGIN, lineY + 4, img.getWidth() * scale, img.getHeight() * scale);
+                cs.drawImage(img, x, lineY + 4, img.getWidth() * scale, img.getHeight() * scale);
             } catch (IOException e) {
                 log.warn("Skipping unreadable signature image for {}", s.email());
-                text(cs, script, 22, MARGIN, lineY + 10, firstNonBlank(s.typedName(), s.name()));
+                text(cs, script, 22, x, lineY + 10, firstNonBlank(s.typedName(), s.name()));
             }
         } else {
-            text(cs, script, 22, MARGIN, lineY + 10, firstNonBlank(s.typedName(), s.name()));
+            text(cs, script, 22, x, lineY + 10, firstNonBlank(s.typedName(), s.name()));
         }
 
         cs.setStrokingColor(Color.GRAY);
         cs.setLineWidth(0.8f);
-        cs.moveTo(MARGIN, lineY);
-        cs.lineTo(MARGIN + sigW + 40, lineY);
+        cs.moveTo(x, lineY);
+        cs.lineTo(x + sigW + 40, lineY);
         cs.stroke();
 
         float textY = lineY - 15;
-        text(cs, bold, 11, MARGIN, textY, s.name());
+        text(cs, bold, 11, x, textY, s.name());
         if (s.title() != null && !s.title().isBlank()) {
             textY -= 14;
-            text(cs, regular, 10, MARGIN, textY, s.title());
+            text(cs, regular, 10, x, textY, s.title());
         }
         textY -= 14;
-        text(cs, regular, 10, MARGIN, textY, s.email());
+        text(cs, regular, 10, x, textY, s.email());
         textY -= 13;
-        text(cs, regular, 9, MARGIN, textY, "Signed on " + s.signedAt());
+        text(cs, regular, 9, x, textY, "Signed on " + s.signedAt());
     }
 
     private void text(PDPageContentStream cs, PDType1Font font, float size, float x, float y, String value) throws IOException {
