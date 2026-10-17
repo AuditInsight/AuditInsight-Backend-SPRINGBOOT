@@ -22,6 +22,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 import java.time.LocalDateTime;
 import java.util.LinkedHashSet;
@@ -45,19 +46,22 @@ public class SignatureService {
     private final OrganisationMemberRepository memberRepo;
     private final UserRepository userRepo;
     private final OrgAccessService orgAccessService;
+    private final EmailService emailService;
 
     public SignatureService(EvidenceRepository evidenceRepo,
                             EvidenceSignatureRepository signatureRepo,
                             SignatureRequestRepository requestRepo,
                             OrganisationMemberRepository memberRepo,
                             UserRepository userRepo,
-                            OrgAccessService orgAccessService) {
+                            OrgAccessService orgAccessService,
+                            EmailService emailService) {
         this.evidenceRepo = evidenceRepo;
         this.signatureRepo = signatureRepo;
         this.requestRepo = requestRepo;
         this.memberRepo = memberRepo;
         this.userRepo = userRepo;
         this.orgAccessService = orgAccessService;
+        this.emailService = emailService;
     }
 
     private Mono<Evidence> findEvidence(UUID evidenceId) {
@@ -121,10 +125,31 @@ public class SignatureService {
                                                                   RequestSignatureRequest body) {
         return findEvidence(evidenceId).flatMap(ev ->
                 orgAccessService.resolveGatedMember(ev.getOrganisationId(), email).flatMap(ctx ->
-                        Flux.fromIterable(new LinkedHashSet<>(body.getUserIds()))
-                                .concatMap(uid -> createRequest(ev, ctx.user(), uid, body.getMessage()))
-                                .map(r -> toResponse(r, ev.getDocumentName()))
-                                .collectList()));
+                        resolveTargetIds(body).flatMap(ids ->
+                                Flux.fromIterable(ids)
+                                        .concatMap(uid -> createRequest(ev, ctx.user(), uid, body.getMessage()))
+                                        .map(r -> toResponse(r, ev.getDocumentName()))
+                                        .collectList())));
+    }
+
+    /** Merges the picked member ids with the typed emails (resolved to user ids), de-duplicated. */
+    private Mono<LinkedHashSet<Long>> resolveTargetIds(RequestSignatureRequest body) {
+        LinkedHashSet<Long> ids = new LinkedHashSet<>();
+        if (body.getUserIds() != null) ids.addAll(body.getUserIds());
+        List<String> emails = body.getEmails() == null ? List.of() : body.getEmails();
+        if (ids.isEmpty() && emails.isEmpty()) {
+            return Mono.error(new InvalidRecord("select at least one member or enter an email address"));
+        }
+        return Flux.fromIterable(new LinkedHashSet<>(emails))
+                .concatMap(e -> userRepo.findByUsername(e.trim())
+                        .switchIfEmpty(Mono.error(new InvalidRecord(
+                                e.trim() + " is not a member of this organisation"))))
+                .map(User::getId)
+                .collectList()
+                .map(resolved -> {
+                    ids.addAll(resolved);
+                    return ids;
+                });
     }
 
     private Mono<SignatureRequest> createRequest(Evidence ev, User requester, Long targetId, String message) {
@@ -155,7 +180,13 @@ public class SignatureService {
                                     r.setMessage(message == null || message.isBlank() ? null : message.trim());
                                     r.setStatus(SignatureRequestStatus.PENDING);
                                     r.setCreatedAt(LocalDateTime.now());
-                                    return requestRepo.save(r);
+                                    return requestRepo.save(r).doOnSuccess(saved ->
+                                            Mono.fromRunnable(() -> emailService.sendSignatureRequestEmail(
+                                                            target.getUsername(), target.getFullName(),
+                                                            requester.getFullName(), ev.getDocumentName(),
+                                                            saved.getMessage()))
+                                                    .subscribeOn(Schedulers.boundedElastic())
+                                                    .subscribe());
                                 })))));
     }
 

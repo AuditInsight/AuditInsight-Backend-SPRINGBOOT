@@ -6,11 +6,15 @@ import com.diana.auditinsightbackendspringboot.DTOs.SignEvidenceRequest;
 import com.diana.auditinsightbackendspringboot.DTOs.SignatureRequestResponse;
 import com.diana.auditinsightbackendspringboot.DTOs.SignatureResponse;
 import com.diana.auditinsightbackendspringboot.Services.SignatureService;
+import com.diana.auditinsightbackendspringboot.Services.SignedDocumentService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
@@ -27,9 +31,11 @@ import java.util.UUID;
 public class SignatureController {
 
     private final SignatureService signatureService;
+    private final SignedDocumentService signedDocumentService;
 
-    public SignatureController(SignatureService signatureService) {
+    public SignatureController(SignatureService signatureService, SignedDocumentService signedDocumentService) {
         this.signatureService = signatureService;
+        this.signedDocumentService = signedDocumentService;
     }
 
     @PostMapping("/evidence/{evidenceId}/signatures")
@@ -65,6 +71,24 @@ public class SignatureController {
             @Valid @RequestBody RequestSignatureRequest body) {
         return signatureService.requestSignatures(auth.getName(), evidenceId, body)
                 .map(r -> new ResponseEntity<>(r, HttpStatus.CREATED));
+    }
+
+    @GetMapping("/evidence/{evidenceId}/download-signed")
+    @Operation(summary = "Download a document with its signatures",
+            description = "Returns the document as a PDF with a signature page (signature, name, email and time of " +
+                    "each signer) added after the original content. PDFs get the page appended, PNG/JPG images are " +
+                    "wrapped into a PDF, and Excel files (which cannot be stamped) return a separate signature " +
+                    "certificate PDF. Fails if nobody has signed yet.")
+    public Mono<ResponseEntity<byte[]>> downloadSigned(
+            Authentication auth,
+            @PathVariable UUID evidenceId) {
+        return signedDocumentService.build(auth.getName(), evidenceId)
+                .map(doc -> ResponseEntity.ok()
+                        .contentType(MediaType.APPLICATION_PDF)
+                        .header(HttpHeaders.CONTENT_DISPOSITION,
+                                ContentDisposition.attachment().filename(doc.fileName()).build().toString())
+                        .header(HttpHeaders.ACCESS_CONTROL_EXPOSE_HEADERS, HttpHeaders.CONTENT_DISPOSITION)
+                        .body(doc.bytes()));
     }
 
     @GetMapping("/signature-requests/pending")
