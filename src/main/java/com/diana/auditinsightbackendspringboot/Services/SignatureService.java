@@ -64,6 +64,10 @@ public class SignatureService {
         this.emailService = emailService;
     }
 
+    private static String blankToNull(String v) {
+        return v == null || v.isBlank() ? null : v.trim();
+    }
+
     private Mono<Evidence> findEvidence(UUID evidenceId) {
         return evidenceRepo.findById(evidenceId)
                 .switchIfEmpty(Mono.error(new InvalidRecord("Evidence not found")));
@@ -74,6 +78,8 @@ public class SignatureService {
     public Mono<SignatureResponse> sign(String email, UUID evidenceId, SignEvidenceRequest body) {
         String typedName = body.getTypedName() == null || body.getTypedName().isBlank()
                 ? null : body.getTypedName().trim();
+        String fullName = blankToNull(body.getFullName());
+        String title = blankToNull(body.getTitle());
         String image = body.getSignatureImage() == null || body.getSignatureImage().isBlank()
                 ? null : body.getSignatureImage();
         if (image != null && !image.startsWith(PNG_DATA_URL_PREFIX)) {
@@ -86,11 +92,12 @@ public class SignatureService {
                     return signatureRepo.findByEvidenceIdAndSignerId(evidenceId, user.getId())
                             .flatMap(existing -> Mono.<SignatureResponse>error(
                                     new InvalidRecord("You have already signed this document")))
-                            .switchIfEmpty(Mono.defer(() -> persistSignature(ev, user, typedName, image)));
+                            .switchIfEmpty(Mono.defer(() -> persistSignature(ev, user, fullName, title, typedName, image)));
                 }));
     }
 
-    private Mono<SignatureResponse> persistSignature(Evidence ev, User user, String typedName, String image) {
+    private Mono<SignatureResponse> persistSignature(Evidence ev, User user, String fullName, String title,
+                                                     String typedName, String image) {
         return requestRepo.findByEvidenceIdAndRequestedUserIdAndStatus(
                         ev.getId(), user.getId(), SignatureRequestStatus.PENDING)
                 .map(Optional::of)
@@ -101,7 +108,8 @@ public class SignatureService {
                     s.setEvidenceId(ev.getId());
                     s.setOrganisationId(ev.getOrganisationId());
                     s.setSignerId(user.getId());
-                    s.setSignerName(user.getFullName());
+                    s.setSignerName(fullName != null ? fullName : user.getFullName());
+                    s.setSignerTitle(title);
                     s.setTypedName(typedName);
                     s.setSignatureImage(image);
                     s.setSignedAt(now);
@@ -254,6 +262,7 @@ public class SignatureService {
         r.setEvidenceId(s.getEvidenceId());
         r.setSignerId(s.getSignerId());
         r.setSignerName(s.getSignerName());
+        r.setSignerTitle(s.getSignerTitle());
         r.setTypedName(s.getTypedName());
         r.setSignatureImage(s.getSignatureImage());
         r.setSignedAt(s.getSignedAt());
