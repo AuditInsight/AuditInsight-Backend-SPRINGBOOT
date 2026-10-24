@@ -17,6 +17,7 @@ import java.util.UUID;
 public class Subscription {
 
     @Id
+    @Column("id")
     private UUID id;
 
     @Column("organisation_id")
@@ -26,6 +27,7 @@ public class Subscription {
     @Column("subscription_type")
     private SubscriptionType subscriptionType;
 
+    @Column("status")
     private SubscriptionStatus status = SubscriptionStatus.PENDING;
 
     @Column("start_date")

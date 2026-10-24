@@ -17,6 +17,7 @@ import java.util.UUID;
 public class OrganisationMember {
 
     @Id
+    @Column("id")
     private UUID id;
 
     @Column("organisation_id")
@@ -25,8 +26,10 @@ public class OrganisationMember {
     @Column("user_id")
     private Long userId;
 
+    @Column("role")
     private Role role;
 
+    @Column("status")
     private MemberStatus status;
 
     @Column("joined_at")

@@ -19,8 +19,10 @@ public class PlanPrice {
     @Column("subscription_type")
     private SubscriptionType subscriptionType;
 
+    @Column("price")
     private BigDecimal price;
 
+    @Column("currency")
     private String currency;
 
     @Column("duration_days")

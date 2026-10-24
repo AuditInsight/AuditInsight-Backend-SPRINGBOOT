@@ -19,6 +19,7 @@ import java.util.UUID;
 public class Payment {
 
     @Id
+    @Column("id")
     private UUID id;
 
     @Column("organisation_id")
@@ -27,8 +28,10 @@ public class Payment {
     @Column("subscription_type")
     private SubscriptionType subscriptionType;
 
+    @Column("provider")
     private PaymentProvider provider;
 
+    @Column("status")
     private PaymentStatus status = PaymentStatus.PENDING;
 
     /** Backend-computed price for the selected {@link #subscriptionType} — never trusted from the client. */
@@ -39,6 +42,7 @@ public class Payment {
     @Column("received_amount")
     private BigDecimal receivedAmount;
 
+    @Column("currency")
     private String currency;
 
     @Column("provider_transaction_id")
