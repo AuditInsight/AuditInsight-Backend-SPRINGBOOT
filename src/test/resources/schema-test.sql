@@ -157,3 +157,29 @@ CREATE TABLE IF NOT EXISTS payments (
     created_at               TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
     updated_at               TIMESTAMP     DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS admin_audit_log (
+    id              UUID         DEFAULT RANDOM_UUID() PRIMARY KEY,
+    admin_user_id   BIGINT       NOT NULL,
+    action          VARCHAR(100) NOT NULL,
+    target_type     VARCHAR(50)  NOT NULL,
+    target_id       VARCHAR(100) NOT NULL,
+    before_state    VARCHAR(4000),
+    after_state     VARCHAR(4000),
+    created_at      TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS plan_prices (
+    subscription_type VARCHAR(20)   PRIMARY KEY,
+    price             NUMERIC(18,2) NOT NULL,
+    currency          VARCHAR(3)    NOT NULL DEFAULT 'RWF',
+    duration_days     INT           NOT NULL,
+    updated_by        BIGINT,
+    updated_at        TIMESTAMP     DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT INTO plan_prices (subscription_type, price, currency, duration_days, updated_by, updated_at)
+VALUES
+    ('MONTHLY',     15000,  'RWF', 30,  NULL, CURRENT_TIMESTAMP),
+    ('SIX_MONTHS',  80000,  'RWF', 180, NULL, CURRENT_TIMESTAMP),
+    ('ANNUAL',      150000, 'RWF', 365, NULL, CURRENT_TIMESTAMP);

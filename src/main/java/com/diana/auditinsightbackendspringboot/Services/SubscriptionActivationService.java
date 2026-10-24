@@ -1,6 +1,7 @@
 package com.diana.auditinsightbackendspringboot.Services;
 
 import com.diana.auditinsightbackendspringboot.Enum.SubscriptionStatus;
+import com.diana.auditinsightbackendspringboot.Enum.SubscriptionType;
 import com.diana.auditinsightbackendspringboot.Exceptions.Custom.InvalidRecord;
 import com.diana.auditinsightbackendspringboot.Models.Payment;
 import com.diana.auditinsightbackendspringboot.Models.Subscription;
@@ -10,6 +11,7 @@ import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 
 import java.time.LocalDateTime;
+import java.util.UUID;
 
 /**
  * Single shared place both payment rails (MoMo and card) call once a payment is confirmed
@@ -22,11 +24,14 @@ public class SubscriptionActivationService {
 
     private final PaymentRepository paymentRepository;
     private final SubscriptionRepository subscriptionRepository;
+    private final PlanPriceService planPriceService;
 
     public SubscriptionActivationService(PaymentRepository paymentRepository,
-                                          SubscriptionRepository subscriptionRepository) {
+                                          SubscriptionRepository subscriptionRepository,
+                                          PlanPriceService planPriceService) {
         this.paymentRepository = paymentRepository;
         this.subscriptionRepository = subscriptionRepository;
+        this.planPriceService = planPriceService;
     }
 
     public Mono<Subscription> activateFromPayment(Payment payment) {
@@ -68,28 +73,83 @@ public class SubscriptionActivationService {
         LocalDateTime base = existing.getEndDate() != null && existing.getEndDate().isAfter(now)
                 ? existing.getEndDate() : now;
 
-        existing.setSubscriptionType(payment.getSubscriptionType());
-        existing.setEndDate(addCycle(base, payment));
-        existing.setUpdatedAt(now);
-        return subscriptionRepository.save(existing);
+        return addCycle(base, payment).flatMap(endDate -> {
+            existing.setSubscriptionType(payment.getSubscriptionType());
+            existing.setEndDate(endDate);
+            existing.setUpdatedAt(now);
+            return subscriptionRepository.save(existing);
+        });
     }
 
     private Mono<Subscription> createNew(Payment payment) {
         LocalDateTime now = LocalDateTime.now();
 
-        Subscription subscription = new Subscription();
-        subscription.setOrganisationId(payment.getOrganisationId());
-        subscription.setSubscriptionType(payment.getSubscriptionType());
-        subscription.setStatus(SubscriptionStatus.ACTIVE);
-        subscription.setStartDate(now);
-        subscription.setEndDate(addCycle(now, payment));
-        subscription.setCreatedBy(payment.getCreatedBy());
-        subscription.setCreatedAt(now);
-        subscription.setUpdatedAt(now);
-        return subscriptionRepository.save(subscription);
+        return addCycle(now, payment).flatMap(endDate -> {
+            Subscription subscription = new Subscription();
+            subscription.setOrganisationId(payment.getOrganisationId());
+            subscription.setSubscriptionType(payment.getSubscriptionType());
+            subscription.setStatus(SubscriptionStatus.ACTIVE);
+            subscription.setStartDate(now);
+            subscription.setEndDate(endDate);
+            subscription.setCreatedBy(payment.getCreatedBy());
+            subscription.setCreatedAt(now);
+            subscription.setUpdatedAt(now);
+            return subscriptionRepository.save(subscription);
+        });
     }
 
-    private LocalDateTime addCycle(LocalDateTime base, Payment payment) {
-        return base.plusDays(payment.getSubscriptionType().getDurationDays());
+    private Mono<LocalDateTime> addCycle(LocalDateTime base, Payment payment) {
+        return planPriceService.getPrice(payment.getSubscriptionType())
+                .map(planPrice -> base.plusDays(planPrice.getDurationDays()));
+    }
+
+    /**
+     * Platform-admin tier change. Updates the org's existing ACTIVE row in place if one exists,
+     * or creates the first ACTIVE row if none does — never a second INSERT while one is already
+     * ACTIVE, which would violate {@code uq_subscriptions_active_per_org}.
+     */
+    public Mono<Subscription> adminChangeSubscription(UUID organisationId, SubscriptionType newType,
+                                                        LocalDateTime explicitEndDate, Long actingAdminId) {
+        return subscriptionRepository.findByOrganisationIdAndStatus(organisationId, SubscriptionStatus.ACTIVE)
+                .flatMap(existing -> applyAdminChange(existing, newType, explicitEndDate))
+                .switchIfEmpty(Mono.defer(() -> createAdminSubscription(organisationId, newType, explicitEndDate, actingAdminId)));
+    }
+
+    private Mono<Subscription> applyAdminChange(Subscription existing, SubscriptionType newType, LocalDateTime explicitEndDate) {
+        LocalDateTime now = LocalDateTime.now();
+        return resolveEndDate(now, newType, explicitEndDate).flatMap(endDate -> {
+            existing.setSubscriptionType(newType);
+            existing.setStatus(SubscriptionStatus.ACTIVE);
+            if (existing.getStartDate() == null) {
+                existing.setStartDate(now);
+            }
+            existing.setEndDate(endDate);
+            existing.setUpdatedAt(now);
+            return subscriptionRepository.save(existing);
+        });
+    }
+
+    private Mono<Subscription> createAdminSubscription(UUID organisationId, SubscriptionType newType,
+                                                         LocalDateTime explicitEndDate, Long actingAdminId) {
+        LocalDateTime now = LocalDateTime.now();
+        return resolveEndDate(now, newType, explicitEndDate).flatMap(endDate -> {
+            Subscription subscription = new Subscription();
+            subscription.setOrganisationId(organisationId);
+            subscription.setSubscriptionType(newType);
+            subscription.setStatus(SubscriptionStatus.ACTIVE);
+            subscription.setStartDate(now);
+            subscription.setEndDate(endDate);
+            subscription.setCreatedBy(actingAdminId);
+            subscription.setCreatedAt(now);
+            subscription.setUpdatedAt(now);
+            return subscriptionRepository.save(subscription);
+        });
+    }
+
+    private Mono<LocalDateTime> resolveEndDate(LocalDateTime now, SubscriptionType newType, LocalDateTime explicitEndDate) {
+        if (explicitEndDate != null) {
+            return Mono.just(explicitEndDate);
+        }
+        return planPriceService.getPrice(newType).map(planPrice -> now.plusDays(planPrice.getDurationDays()));
     }
 }

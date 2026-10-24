@@ -32,6 +32,7 @@ public class PaymentService {
     private final PawaPayService pawaPayService;
     private final FlutterwaveService flutterwaveService;
     private final SubscriptionActivationService activationService;
+    private final PlanPriceService planPriceService;
 
     public PaymentService(PaymentRepository paymentRepository,
                            SubscriptionRepository subscriptionRepository,
@@ -39,7 +40,8 @@ public class PaymentService {
                            OrganisationMemberRepository memberRepository,
                            PawaPayService pawaPayService,
                            FlutterwaveService flutterwaveService,
-                           SubscriptionActivationService activationService) {
+                           SubscriptionActivationService activationService,
+                           PlanPriceService planPriceService) {
         this.paymentRepository = paymentRepository;
         this.subscriptionRepository = subscriptionRepository;
         this.userRepository = userRepository;
@@ -47,6 +49,7 @@ public class PaymentService {
         this.pawaPayService = pawaPayService;
         this.flutterwaveService = flutterwaveService;
         this.activationService = activationService;
+        this.planPriceService = planPriceService;
     }
 
     public record CardCheckoutResult(Payment payment, String checkoutUrl) {}
@@ -79,7 +82,7 @@ public class PaymentService {
                     return createPendingPayment(organisationId, subscriptionType, PaymentProvider.CARD,
                             null, txRef, user.getId())
                             .flatMap(payment -> flutterwaveService.initiateCheckout(
-                                            txRef, subscriptionType.getPriceRwf(), SubscriptionType.CURRENCY, email)
+                                            txRef, payment.getExpectedAmount(), payment.getCurrency(), email)
                                     .map(checkoutUrl -> new CardCheckoutResult(payment, checkoutUrl))
                                     .onErrorResume(e -> markFailed(payment, e.getMessage()).then(Mono.error(e))));
                 });
@@ -88,20 +91,24 @@ public class PaymentService {
     private Mono<Payment> createPendingPayment(UUID organisationId, SubscriptionType subscriptionType,
                                                 PaymentProvider provider, String payerPhone,
                                                 String providerTransactionId, Long createdBy) {
-        Payment payment = new Payment();
-        payment.setOrganisationId(organisationId);
-        payment.setSubscriptionType(subscriptionType);
-        payment.setProvider(provider);
-        payment.setStatus(PaymentStatus.PENDING);
-        payment.setExpectedAmount(subscriptionType.getPriceRwf());
-        payment.setCurrency(SubscriptionType.CURRENCY);
-        payment.setPayerPhone(payerPhone);
-        payment.setProviderTransactionId(providerTransactionId);
-        payment.setCreatedBy(createdBy);
-        LocalDateTime now = LocalDateTime.now();
-        payment.setCreatedAt(now);
-        payment.setUpdatedAt(now);
-        return paymentRepository.save(payment);
+        return planPriceService.getPrice(subscriptionType)
+                .map(planPrice -> {
+                    Payment payment = new Payment();
+                    payment.setOrganisationId(organisationId);
+                    payment.setSubscriptionType(subscriptionType);
+                    payment.setProvider(provider);
+                    payment.setStatus(PaymentStatus.PENDING);
+                    payment.setExpectedAmount(planPrice.getPrice());
+                    payment.setCurrency(planPrice.getCurrency());
+                    payment.setPayerPhone(payerPhone);
+                    payment.setProviderTransactionId(providerTransactionId);
+                    payment.setCreatedBy(createdBy);
+                    LocalDateTime now = LocalDateTime.now();
+                    payment.setCreatedAt(now);
+                    payment.setUpdatedAt(now);
+                    return payment;
+                })
+                .flatMap(paymentRepository::save);
     }
 
     private Mono<Payment> markFailed(Payment payment, String reason) {

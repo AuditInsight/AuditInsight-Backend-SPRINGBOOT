@@ -34,6 +34,7 @@ class PaymentServiceTest {
     @Mock private PawaPayService pawaPayService;
     @Mock private FlutterwaveService flutterwaveService;
     @Mock private SubscriptionActivationService activationService;
+    @Mock private PlanPriceService planPriceService;
 
     private PaymentService paymentService;
 
@@ -43,7 +44,16 @@ class PaymentServiceTest {
     @BeforeEach
     void setUp() {
         paymentService = new PaymentService(paymentRepository, subscriptionRepository, userRepository,
-                memberRepository, pawaPayService, flutterwaveService, activationService);
+                memberRepository, pawaPayService, flutterwaveService, activationService, planPriceService);
+    }
+
+    private PlanPrice monthlyPlanPrice() {
+        PlanPrice p = new PlanPrice();
+        p.setSubscriptionType(SubscriptionType.MONTHLY);
+        p.setPrice(new BigDecimal("15000"));
+        p.setCurrency("RWF");
+        p.setDurationDays(30);
+        return p;
     }
 
     private User user() {
@@ -69,6 +79,7 @@ class PaymentServiceTest {
     void startMomoCheckout_happyPath_createsPendingPaymentAndCallsMomo() {
         when(userRepository.findByUsername(email)).thenReturn(Mono.just(user()));
         when(memberRepository.findByOrganisationIdAndUserId(orgId, 1L)).thenReturn(Mono.just(activeMember()));
+        when(planPriceService.getPrice(SubscriptionType.MONTHLY)).thenReturn(Mono.just(monthlyPlanPrice()));
         when(paymentRepository.save(any())).thenAnswer(inv -> {
             Payment p = inv.getArgument(0);
             if (p.getId() == null) p.setId(UUID.randomUUID());
@@ -90,6 +101,7 @@ class PaymentServiceTest {
     void startMomoCheckout_momoRequestFails_marksPaymentFailedAndPropagatesError() {
         when(userRepository.findByUsername(email)).thenReturn(Mono.just(user()));
         when(memberRepository.findByOrganisationIdAndUserId(orgId, 1L)).thenReturn(Mono.just(activeMember()));
+        when(planPriceService.getPrice(SubscriptionType.MONTHLY)).thenReturn(Mono.just(monthlyPlanPrice()));
         when(paymentRepository.save(any())).thenAnswer(inv -> {
             Payment p = inv.getArgument(0);
             if (p.getId() == null) p.setId(UUID.randomUUID());
@@ -225,6 +237,7 @@ class PaymentServiceTest {
     void startCardCheckout_happyPath_createsPendingRwfPaymentAndReturnsCheckoutUrl() {
         when(userRepository.findByUsername(email)).thenReturn(Mono.just(user()));
         when(memberRepository.findByOrganisationIdAndUserId(orgId, 1L)).thenReturn(Mono.just(activeMember()));
+        when(planPriceService.getPrice(SubscriptionType.MONTHLY)).thenReturn(Mono.just(monthlyPlanPrice()));
         when(paymentRepository.save(any())).thenAnswer(inv -> {
             Payment p = inv.getArgument(0);
             if (p.getId() == null) p.setId(UUID.randomUUID());
@@ -246,6 +259,7 @@ class PaymentServiceTest {
     void startCardCheckout_flutterwaveInitiationFails_marksPaymentFailed() {
         when(userRepository.findByUsername(email)).thenReturn(Mono.just(user()));
         when(memberRepository.findByOrganisationIdAndUserId(orgId, 1L)).thenReturn(Mono.just(activeMember()));
+        when(planPriceService.getPrice(SubscriptionType.MONTHLY)).thenReturn(Mono.just(monthlyPlanPrice()));
         when(paymentRepository.save(any())).thenAnswer(inv -> {
             Payment p = inv.getArgument(0);
             if (p.getId() == null) p.setId(UUID.randomUUID());
