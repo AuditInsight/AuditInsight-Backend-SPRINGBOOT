@@ -17,23 +17,28 @@ import java.time.LocalDateTime;
 public class User {
 
     @Id
+    @Column("id")
     private Long id;
 
     @Column("username")
     private String username;
 
+    @Column("password")
     private String password;
 
     @Column("full_name")
     private String fullName;
 
+    @Column("role")
     private Role role;
 
     @Column("auth_provider")
     private String authProvider;
 
+    @Column("verified")
     private boolean verified = false;
 
+    @Column("active")
     private boolean active = true;
 
     @Column("must_change_password")
