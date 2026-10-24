@@ -14,6 +14,8 @@ import reactor.core.publisher.Mono;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -84,6 +86,57 @@ class SubscriptionControllerTest {
                           "event": "charge.completed",
                           "data": { "id": "999", "tx_ref": "AI-1", "status": "successful" }
                         }""")
+                .exchange()
+                .expectStatus().isOk();
+    }
+
+    @Test
+    void pawaPayWebhook_knownDeposit_returns200() {
+        when(paymentService.handlePawaPayCallback(any())).thenReturn(Mono.empty());
+
+        webTestClient.post().uri("/api/subscriptions/webhooks/pawapay")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        { "depositId": "11111111-1111-1111-1111-111111111111", "status": "COMPLETED" }""")
+                .exchange()
+                .expectStatus().isOk();
+
+        verify(paymentService).handlePawaPayCallback(
+                java.util.UUID.fromString("11111111-1111-1111-1111-111111111111"));
+    }
+
+    @Test
+    void pawaPayWebhook_malformedDepositId_isIgnoredAndStillReturns200() {
+        webTestClient.post().uri("/api/subscriptions/webhooks/pawapay")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        { "depositId": "not-a-uuid" }""")
+                .exchange()
+                .expectStatus().isOk();
+
+        verify(paymentService, never()).handlePawaPayCallback(any());
+    }
+
+    @Test
+    void pawaPayWebhook_missingDepositId_isIgnoredAndStillReturns200() {
+        webTestClient.post().uri("/api/subscriptions/webhooks/pawapay")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{ }")
+                .exchange()
+                .expectStatus().isOk();
+
+        verify(paymentService, never()).handlePawaPayCallback(any());
+    }
+
+    @Test
+    void pawaPayWebhook_internalProcessingError_stillReturns200() {
+        when(paymentService.handlePawaPayCallback(any()))
+                .thenReturn(Mono.error(new RuntimeException("pawaPay status API unreachable")));
+
+        webTestClient.post().uri("/api/subscriptions/webhooks/pawapay")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        { "depositId": "11111111-1111-1111-1111-111111111111" }""")
                 .exchange()
                 .expectStatus().isOk();
     }
