@@ -43,7 +43,10 @@ jobs:
         env:
           SPRING_DATABASE_URL: ${{ secrets.SPRING_DATABASE_URL }}
           FLYWAY_URL: ${{ secrets.FLYWAY_URL }}
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          # Deliberately not setting JWT_SECRET here: an OS env var always overrides a profile's
+          # application-{profile}.properties value in Spring, so even an empty JWT_SECRET secret
+          # would silently stomp the dedicated, safe value application-test.properties already
+          # defines for the "test" profile. Tests should never depend on the production secret.
           GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
           BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
