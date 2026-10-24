@@ -91,6 +91,30 @@ public class SubscriptionController {
                 });
     }
 
+    @PostMapping("/webhooks/pawapay")
+    @Operation(summary = "pawaPay deposit callback receiver",
+               description = "Receives MoMo deposit completion callbacks from pawaPay. The callback is only " +
+                       "used as a trigger — the outcome is always re-verified against the pawaPay API " +
+                       "before any subscription is activated. Existing status polling remains available " +
+                       "as a backup, so this always acknowledges with 200 rather than retry-storming pawaPay.")
+    public Mono<ResponseEntity<Void>> pawaPayWebhook(@RequestBody Map<String, Object> payload) {
+        Object depositIdValue = payload.get("depositId");
+        UUID depositId;
+        try {
+            depositId = UUID.fromString(String.valueOf(depositIdValue));
+        } catch (IllegalArgumentException e) {
+            log.warn("pawaPay webhook payload had a missing/malformed depositId: {}", depositIdValue);
+            return Mono.just(ResponseEntity.ok().build());
+        }
+
+        return paymentService.handlePawaPayCallback(depositId)
+                .thenReturn(ResponseEntity.ok().<Void>build())
+                .onErrorResume(e -> {
+                    log.error("Error processing pawaPay webhook for deposit {}", depositId, e);
+                    return Mono.just(ResponseEntity.ok().<Void>build());
+                });
+    }
+
     @GetMapping("/{organisationId}/active")
     @SecurityRequirement(name = "bearerAuth")
     @Operation(summary = "Get active subscription",

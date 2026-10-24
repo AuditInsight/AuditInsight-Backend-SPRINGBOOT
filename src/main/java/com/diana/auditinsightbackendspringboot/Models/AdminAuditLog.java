@@ -15,11 +15,13 @@ import java.util.UUID;
 public class AdminAuditLog {
 
     @Id
+    @Column("id")
     private UUID id;
 
     @Column("admin_user_id")
     private Long adminUserId;
 
+    @Column("action")
     private String action;
 
     @Column("target_type")

@@ -17,6 +17,7 @@ import java.util.UUID;
 public class Organisation {
 
     @Id
+    @Column("id")
     private UUID id;
 
     @Column("client_id")

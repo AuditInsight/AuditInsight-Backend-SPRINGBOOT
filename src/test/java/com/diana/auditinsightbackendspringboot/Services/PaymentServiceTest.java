@@ -109,12 +109,15 @@ class PaymentServiceTest {
         });
         when(pawaPayService.requestDeposit(any(), any(), anyString()))
                 .thenReturn(Mono.error(new RuntimeException("MTN sandbox unreachable")));
+        when(paymentRepository.resolveIfPending(any(), eq(PaymentStatus.FAILED), isNull(), anyString()))
+                .thenReturn(Mono.just(1));
 
         StepVerifier.create(paymentService.startMomoCheckout(orgId, email, SubscriptionType.MONTHLY, "0788123456"))
                 .expectErrorMatches(e -> e instanceof RuntimeException && e.getMessage().contains("unreachable"))
                 .verify();
 
-        verify(paymentRepository, times(2)).save(any()); // initial PENDING save + FAILED save
+        verify(paymentRepository, times(1)).save(any()); // initial PENDING save only — FAILED goes through resolveIfPending
+        verify(paymentRepository, times(1)).resolveIfPending(any(), eq(PaymentStatus.FAILED), isNull(), anyString());
         verify(activationService, never()).activateFromPayment(any());
     }
 
@@ -150,7 +153,8 @@ class PaymentServiceTest {
         when(memberRepository.findByOrganisationIdAndUserId(orgId, 1L)).thenReturn(Mono.just(activeMember()));
         when(pawaPayService.getStatus(payment.getId())).thenReturn(Mono.just(
                 new PawaPayService.StatusResult(PawaPayService.PawaPayStatus.SUCCESSFUL, null, new BigDecimal("15000"))));
-        when(paymentRepository.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
+        when(paymentRepository.resolveIfPending(payment.getId(), PaymentStatus.SUCCESSFUL,
+                new BigDecimal("15000"), null)).thenReturn(Mono.just(1));
 
         Subscription sub = new Subscription();
         sub.setId(UUID.randomUUID());
@@ -164,6 +168,51 @@ class PaymentServiceTest {
     }
 
     @Test
+    void getMomoPaymentStatus_concurrentResolutionLosesClaim_doesNotDoubleActivate() {
+        // Simulates the exact race #28 describes: a client poll and the pawaPay webhook both read
+        // the payment as PENDING and both try to resolve it. Only the first resolveIfPending call
+        // should win (return 1); the second must get 0 and must not touch SubscriptionActivationService.
+        UUID paymentId = UUID.randomUUID();
+
+        Payment pendingForCaller1 = pendingMomoPayment();
+        pendingForCaller1.setId(paymentId);
+        Payment pendingForCaller2 = pendingMomoPayment();
+        pendingForCaller2.setId(paymentId);
+        Payment resolvedByCaller1 = pendingMomoPayment();
+        resolvedByCaller1.setId(paymentId);
+        resolvedByCaller1.setStatus(PaymentStatus.SUCCESSFUL);
+        resolvedByCaller1.setReceivedAmount(new BigDecimal("15000"));
+
+        when(userRepository.findByUsername(email)).thenReturn(Mono.just(user()));
+        when(memberRepository.findByOrganisationIdAndUserId(orgId, 1L)).thenReturn(Mono.just(activeMember()));
+        when(pawaPayService.getStatus(paymentId)).thenReturn(Mono.just(
+                new PawaPayService.StatusResult(PawaPayService.PawaPayStatus.SUCCESSFUL, null, new BigDecimal("15000"))));
+
+        when(paymentRepository.findById(paymentId))
+                .thenReturn(Mono.just(pendingForCaller1))  // caller 1's initial read
+                .thenReturn(Mono.just(pendingForCaller2))  // caller 2's initial read — also still PENDING
+                .thenReturn(Mono.just(resolvedByCaller1)); // caller 2's refetch after losing the claim
+
+        when(paymentRepository.resolveIfPending(paymentId, PaymentStatus.SUCCESSFUL, new BigDecimal("15000"), null))
+                .thenReturn(Mono.just(1))  // caller 1 wins the claim
+                .thenReturn(Mono.just(0)); // caller 2 loses it
+
+        Subscription sub = new Subscription();
+        sub.setId(UUID.randomUUID());
+        when(activationService.activateFromPayment(any())).thenReturn(Mono.just(sub));
+
+        StepVerifier.create(paymentService.getMomoPaymentStatus(paymentId, email))
+                .expectNextMatches(p -> p.getStatus() == PaymentStatus.SUCCESSFUL)
+                .verifyComplete();
+        StepVerifier.create(paymentService.getMomoPaymentStatus(paymentId, email))
+                .expectNextMatches(p -> p.getStatus() == PaymentStatus.SUCCESSFUL)
+                .verifyComplete();
+
+        // Exactly one of the two resolutions actually activated a subscription.
+        verify(activationService, times(1)).activateFromPayment(any());
+    }
+
+    @Test
     void getMomoPaymentStatus_momoReportsSuccessfulButUnderpaid_marksUnderpaidWithoutActivating() {
         Payment payment = pendingMomoPayment();
         when(paymentRepository.findById(payment.getId())).thenReturn(Mono.just(payment));
@@ -171,7 +220,8 @@ class PaymentServiceTest {
         when(memberRepository.findByOrganisationIdAndUserId(orgId, 1L)).thenReturn(Mono.just(activeMember()));
         when(pawaPayService.getStatus(payment.getId())).thenReturn(Mono.just(
                 new PawaPayService.StatusResult(PawaPayService.PawaPayStatus.SUCCESSFUL, null, new BigDecimal("10000"))));
-        when(paymentRepository.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
+        when(paymentRepository.resolveIfPending(eq(payment.getId()), eq(PaymentStatus.UNDERPAID),
+                eq(new BigDecimal("10000")), anyString())).thenReturn(Mono.just(1));
 
         StepVerifier.create(paymentService.getMomoPaymentStatus(payment.getId(), email))
                 .expectNextMatches(p -> p.getStatus() == PaymentStatus.UNDERPAID
@@ -189,7 +239,8 @@ class PaymentServiceTest {
         when(memberRepository.findByOrganisationIdAndUserId(orgId, 1L)).thenReturn(Mono.just(activeMember()));
         when(pawaPayService.getStatus(payment.getId())).thenReturn(Mono.just(
                 new PawaPayService.StatusResult(PawaPayService.PawaPayStatus.FAILED, "PAYER_NOT_FOUND: Payer not found", null)));
-        when(paymentRepository.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
+        when(paymentRepository.resolveIfPending(eq(payment.getId()), eq(PaymentStatus.FAILED), isNull(),
+                eq("PAYER_NOT_FOUND: Payer not found"))).thenReturn(Mono.just(1));
 
         StepVerifier.create(paymentService.getMomoPaymentStatus(payment.getId(), email))
                 .expectNextMatches(p -> p.getStatus() == PaymentStatus.FAILED
@@ -267,12 +318,15 @@ class PaymentServiceTest {
         });
         when(flutterwaveService.initiateCheckout(anyString(), any(), eq("RWF"), eq(email)))
                 .thenReturn(Mono.error(new RuntimeException("Flutterwave sandbox unreachable")));
+        when(paymentRepository.resolveIfPending(any(), eq(PaymentStatus.FAILED), isNull(), anyString()))
+                .thenReturn(Mono.just(1));
 
         StepVerifier.create(paymentService.startCardCheckout(orgId, email, SubscriptionType.MONTHLY))
                 .expectErrorMatches(e -> e.getMessage().contains("unreachable"))
                 .verify();
 
-        verify(paymentRepository, times(2)).save(any());
+        verify(paymentRepository, times(1)).save(any());
+        verify(paymentRepository, times(1)).resolveIfPending(any(), eq(PaymentStatus.FAILED), isNull(), anyString());
     }
 
     // ──────────────────────────── handleFlutterwaveWebhook ────────────────────────────
@@ -308,7 +362,8 @@ class PaymentServiceTest {
         when(paymentRepository.findByProviderTransactionId("AI-1")).thenReturn(Mono.just(payment));
         when(flutterwaveService.verifyTransaction("999")).thenReturn(Mono.just(
                 new FlutterwaveService.VerificationResult(true, "successful", "AI-1", new BigDecimal("15000"), "RWF")));
-        when(paymentRepository.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
+        when(paymentRepository.resolveIfPending(payment.getId(), PaymentStatus.SUCCESSFUL,
+                new BigDecimal("15000"), null)).thenReturn(Mono.just(1));
         Subscription sub = new Subscription();
         sub.setId(UUID.randomUUID());
         when(activationService.activateFromPayment(any())).thenReturn(Mono.just(sub));
@@ -334,7 +389,8 @@ class PaymentServiceTest {
         when(paymentRepository.findByProviderTransactionId("AI-1")).thenReturn(Mono.just(payment));
         when(flutterwaveService.verifyTransaction("999")).thenReturn(Mono.just(
                 new FlutterwaveService.VerificationResult(true, "successful", "AI-1", new BigDecimal("10000"), "RWF")));
-        when(paymentRepository.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
+        when(paymentRepository.resolveIfPending(eq(payment.getId()), eq(PaymentStatus.UNDERPAID),
+                eq(new BigDecimal("10000")), anyString())).thenReturn(Mono.just(1));
 
         StepVerifier.create(paymentService.handleFlutterwaveWebhook("good-hash", webhookPayload("AI-1", "999")))
                 .verifyComplete();
@@ -360,7 +416,8 @@ class PaymentServiceTest {
         when(paymentRepository.findByProviderTransactionId("AI-1")).thenReturn(Mono.just(payment));
         when(flutterwaveService.verifyTransaction("999")).thenReturn(Mono.just(
                 new FlutterwaveService.VerificationResult(true, "successful", "SOMEONE-ELSES-REF", new BigDecimal("1.00"), "USD")));
-        when(paymentRepository.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
+        when(paymentRepository.resolveIfPending(eq(payment.getId()), eq(PaymentStatus.FAILED), isNull(), anyString()))
+                .thenReturn(Mono.just(1));
 
         StepVerifier.create(paymentService.handleFlutterwaveWebhook("good-hash", webhookPayload("AI-1", "999")))
                 .verifyComplete();
@@ -382,7 +439,8 @@ class PaymentServiceTest {
         when(paymentRepository.findByProviderTransactionId("AI-1")).thenReturn(Mono.just(payment));
         when(flutterwaveService.verifyTransaction("999")).thenReturn(Mono.just(
                 new FlutterwaveService.VerificationResult(false, "failed", "AI-1", null, null)));
-        when(paymentRepository.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
+        when(paymentRepository.resolveIfPending(eq(payment.getId()), eq(PaymentStatus.FAILED), isNull(), anyString()))
+                .thenReturn(Mono.just(1));
 
         StepVerifier.create(paymentService.handleFlutterwaveWebhook("good-hash", webhookPayload("AI-1", "999")))
                 .verifyComplete();
@@ -408,6 +466,150 @@ class PaymentServiceTest {
         verify(flutterwaveService, never()).verifyTransaction(any());
         verify(activationService, never()).activateFromPayment(any());
         verify(paymentRepository, never()).save(any());
+    }
+
+    // ──────────────────────────── handlePawaPayCallback ────────────────────────────
+
+    @Test
+    void handlePawaPayCallback_verifiedSuccessful_marksSuccessfulAndActivates() {
+        Payment payment = pendingMomoPayment();
+
+        when(paymentRepository.findById(payment.getId())).thenReturn(Mono.just(payment));
+        when(pawaPayService.getStatus(payment.getId())).thenReturn(Mono.just(
+                new PawaPayService.StatusResult(PawaPayService.PawaPayStatus.SUCCESSFUL, null, new BigDecimal("15000"))));
+        when(paymentRepository.resolveIfPending(payment.getId(), PaymentStatus.SUCCESSFUL,
+                new BigDecimal("15000"), null)).thenReturn(Mono.just(1));
+        Subscription sub = new Subscription();
+        sub.setId(UUID.randomUUID());
+        when(activationService.activateFromPayment(any())).thenReturn(Mono.just(sub));
+
+        StepVerifier.create(paymentService.handlePawaPayCallback(payment.getId())).verifyComplete();
+
+        verify(activationService, times(1)).activateFromPayment(any());
+    }
+
+    @Test
+    void handlePawaPayCallback_reportedUnderpaid_marksUnderpaidWithoutActivating() {
+        Payment payment = pendingMomoPayment();
+
+        when(paymentRepository.findById(payment.getId())).thenReturn(Mono.just(payment));
+        when(pawaPayService.getStatus(payment.getId())).thenReturn(Mono.just(
+                new PawaPayService.StatusResult(PawaPayService.PawaPayStatus.SUCCESSFUL, null, new BigDecimal("10000"))));
+        when(paymentRepository.resolveIfPending(eq(payment.getId()), eq(PaymentStatus.UNDERPAID),
+                eq(new BigDecimal("10000")), anyString())).thenReturn(Mono.just(1));
+
+        StepVerifier.create(paymentService.handlePawaPayCallback(payment.getId())).verifyComplete();
+
+        verify(activationService, never()).activateFromPayment(any());
+    }
+
+    @Test
+    void handlePawaPayCallback_reportedFailed_marksFailedWithoutActivating() {
+        Payment payment = pendingMomoPayment();
+
+        when(paymentRepository.findById(payment.getId())).thenReturn(Mono.just(payment));
+        when(pawaPayService.getStatus(payment.getId())).thenReturn(Mono.just(
+                new PawaPayService.StatusResult(PawaPayService.PawaPayStatus.FAILED, "PAYER_NOT_FOUND", null)));
+        when(paymentRepository.resolveIfPending(eq(payment.getId()), eq(PaymentStatus.FAILED), isNull(),
+                eq("PAYER_NOT_FOUND"))).thenReturn(Mono.just(1));
+
+        StepVerifier.create(paymentService.handlePawaPayCallback(payment.getId())).verifyComplete();
+
+        verify(activationService, never()).activateFromPayment(any());
+    }
+
+    @Test
+    void handlePawaPayCallback_duplicateDeliveryForAlreadyTerminalPayment_isIdempotentNoOp() {
+        Payment payment = pendingMomoPayment();
+        payment.setStatus(PaymentStatus.SUCCESSFUL); // already resolved by an earlier callback/poll
+
+        when(paymentRepository.findById(payment.getId())).thenReturn(Mono.just(payment));
+
+        StepVerifier.create(paymentService.handlePawaPayCallback(payment.getId())).verifyComplete();
+
+        verify(pawaPayService, never()).getStatus(any());
+        verify(activationService, never()).activateFromPayment(any());
+    }
+
+    @Test
+    void handlePawaPayCallback_nonMomoPayment_isIgnored() {
+        Payment payment = pendingMomoPayment();
+        payment.setProvider(PaymentProvider.CARD); // forged/misrouted callback for a card payment
+
+        when(paymentRepository.findById(payment.getId())).thenReturn(Mono.just(payment));
+
+        StepVerifier.create(paymentService.handlePawaPayCallback(payment.getId())).verifyComplete();
+
+        verify(pawaPayService, never()).getStatus(any());
+        verify(activationService, never()).activateFromPayment(any());
+    }
+
+    @Test
+    void handlePawaPayCallback_unknownDepositId_isIgnored() {
+        UUID unknownId = UUID.randomUUID();
+        when(paymentRepository.findById(unknownId)).thenReturn(Mono.empty());
+
+        StepVerifier.create(paymentService.handlePawaPayCallback(unknownId)).verifyComplete();
+
+        verify(pawaPayService, never()).getStatus(any());
+        verify(activationService, never()).activateFromPayment(any());
+    }
+
+    // ──────────────────────────── reconcilePendingPayment / expireStalePayment ────────────────────────────
+
+    @Test
+    void reconcilePendingPayment_momoNowSuccessful_activatesSubscription() {
+        Payment payment = pendingMomoPayment();
+
+        when(pawaPayService.getStatus(payment.getId())).thenReturn(Mono.just(
+                new PawaPayService.StatusResult(PawaPayService.PawaPayStatus.SUCCESSFUL, null, new BigDecimal("15000"))));
+        when(paymentRepository.resolveIfPending(payment.getId(), PaymentStatus.SUCCESSFUL,
+                new BigDecimal("15000"), null)).thenReturn(Mono.just(1));
+        Subscription sub = new Subscription();
+        sub.setId(UUID.randomUUID());
+        when(activationService.activateFromPayment(any())).thenReturn(Mono.just(sub));
+
+        StepVerifier.create(paymentService.reconcilePendingPayment(payment))
+                .expectNextMatches(p -> p.getStatus() == PaymentStatus.SUCCESSFUL)
+                .verifyComplete();
+    }
+
+    @Test
+    void reconcilePendingPayment_cardVerifiedByTxRef_activatesSubscription() {
+        Payment payment = new Payment();
+        payment.setId(UUID.randomUUID());
+        payment.setOrganisationId(orgId);
+        payment.setProvider(PaymentProvider.CARD);
+        payment.setStatus(PaymentStatus.PENDING);
+        payment.setProviderTransactionId("AI-1");
+        payment.setExpectedAmount(new BigDecimal("15000"));
+        payment.setCurrency("RWF");
+
+        when(flutterwaveService.verifyByTxRef("AI-1")).thenReturn(Mono.just(
+                new FlutterwaveService.VerificationResult(true, "successful", "AI-1", new BigDecimal("15000"), "RWF")));
+        when(paymentRepository.resolveIfPending(payment.getId(), PaymentStatus.SUCCESSFUL,
+                new BigDecimal("15000"), null)).thenReturn(Mono.just(1));
+        Subscription sub = new Subscription();
+        sub.setId(UUID.randomUUID());
+        when(activationService.activateFromPayment(any())).thenReturn(Mono.just(sub));
+
+        StepVerifier.create(paymentService.reconcilePendingPayment(payment))
+                .expectNextMatches(p -> p.getStatus() == PaymentStatus.SUCCESSFUL)
+                .verifyComplete();
+    }
+
+    @Test
+    void expireStalePayment_marksExpired() {
+        Payment payment = pendingMomoPayment();
+
+        when(paymentRepository.resolveIfPending(eq(payment.getId()), eq(PaymentStatus.EXPIRED), isNull(), anyString()))
+                .thenReturn(Mono.just(1));
+
+        StepVerifier.create(paymentService.expireStalePayment(payment))
+                .expectNextMatches(p -> p.getStatus() == PaymentStatus.EXPIRED)
+                .verifyComplete();
+
+        verify(activationService, never()).activateFromPayment(any());
     }
 
     // ──────────────────────────── getActiveSubscription ────────────────────────────
