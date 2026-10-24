@@ -28,19 +28,27 @@ public class SuperAdminSeeder implements CommandLineRunner {
 
     @Override
     public void run(String... args) {
+        if (adminUsername == null || adminUsername.isBlank()) {
+            throw new IllegalStateException("ADMIN_USERNAME must be set");
+        }
+        if (adminPassword == null || adminPassword.isBlank()) {
+            throw new IllegalStateException("ADMIN_PASSWORD must be set");
+        }
+
         Boolean exists = userRepository.existsByUsername(adminUsername).block();
         if (Boolean.FALSE.equals(exists)) {
             User admin = new User();
             admin.setFullName("Super Admin");
-            admin.setUsername("admin@auditinsight.com");
+            admin.setUsername(adminUsername);
             admin.setPassword(passwordEncoder.encode(adminPassword));
             admin.setRole(Role.ADMIN);
             admin.setAuthProvider("JWT");
             admin.setVerified(true);
+            admin.setActive(true);
             userRepository.save(admin).block();
-            System.out.println("[AdminSeeder] Super admin seeded: admin@auditinsight.com");
+            System.out.println("[AdminSeeder] Super admin seeded: " + adminUsername);
         } else {
-            System.out.println("[AdminSeeder] Super admin already exists: admin@auditinsight.com");
+            System.out.println("[AdminSeeder] Super admin already exists: " + adminUsername);
         }
     }
 }

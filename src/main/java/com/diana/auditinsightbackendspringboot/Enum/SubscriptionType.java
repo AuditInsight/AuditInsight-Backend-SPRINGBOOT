@@ -22,10 +22,12 @@ public enum SubscriptionType {
         this.priceRwf = priceRwf;
     }
 
+    /** Original/reference value — live duration is platform-admin-editable via {@code plan_prices}. */
     public int getDurationDays() {
         return durationDays;
     }
 
+    /** Original/reference value — live price is platform-admin-editable via {@code plan_prices}. */
     public BigDecimal getPriceRwf() {
         return priceRwf;
     }

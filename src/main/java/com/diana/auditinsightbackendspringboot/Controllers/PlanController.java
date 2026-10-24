@@ -1,7 +1,7 @@
 package com.diana.auditinsightbackendspringboot.Controllers;
 
 import com.diana.auditinsightbackendspringboot.DTOs.PlanResponse;
-import com.diana.auditinsightbackendspringboot.Enum.SubscriptionType;
+import com.diana.auditinsightbackendspringboot.Models.PlanPrice;
 import com.diana.auditinsightbackendspringboot.Services.PlanService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
@@ -30,7 +30,7 @@ public class PlanController {
         return planService.listPlans().map(this::toResponse);
     }
 
-    private PlanResponse toResponse(SubscriptionType type) {
-        return new PlanResponse(type, type.getDurationDays(), type.getPriceRwf(), SubscriptionType.CURRENCY);
+    private PlanResponse toResponse(PlanPrice price) {
+        return new PlanResponse(price.getSubscriptionType(), price.getDurationDays(), price.getPrice(), price.getCurrency());
     }
 }
