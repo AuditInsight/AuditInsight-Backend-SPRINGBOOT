@@ -12,4 +12,9 @@ public interface OrganisationMemberRepository extends ReactiveCrudRepository<Org
     Flux<OrganisationMember> findAllByUserId(Long userId);
     Mono<OrganisationMember> findByOrganisationIdAndUserId(UUID organisationId, Long userId);
     Mono<Void> deleteByOrganisationIdAndUserId(UUID organisationId, Long userId);
+
+    /** Bulk-resolves org memberships for a page of admin users in one query instead of N+1. */
+    Flux<OrganisationMember> findAllByUserIdIn(java.util.Collection<Long> userIds);
+
+    Mono<Long> countByOrganisationId(UUID organisationId);
 }

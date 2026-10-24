@@ -1,8 +1,10 @@
 package com.diana.auditinsightbackendspringboot.Services;
 
+import com.diana.auditinsightbackendspringboot.Admin.AdminAuditService;
 import com.diana.auditinsightbackendspringboot.Admin.AdminService;
 import com.diana.auditinsightbackendspringboot.Enum.Role;
 import com.diana.auditinsightbackendspringboot.Exceptions.Custom.InvalidRecord;
+import com.diana.auditinsightbackendspringboot.Models.AdminAuditLog;
 import com.diana.auditinsightbackendspringboot.Models.User;
 import com.diana.auditinsightbackendspringboot.Repositories.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -20,14 +22,25 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class AdminServiceTest {
 
+    private static final String ACTING_ADMIN = "admin@test.com";
+
     @Mock private UserRepository userRepository;
     @Mock private EmailService emailService;
+    @Mock private AdminAuditService adminAuditService;
 
     private AdminService adminService;
 
     @BeforeEach
     void setUp() {
-        adminService = new AdminService(userRepository, emailService);
+        adminService = new AdminService(userRepository, emailService, adminAuditService);
+    }
+
+    private void stubAuditTrail() {
+        User admin = accountUser(ACTING_ADMIN, Role.ADMIN);
+        admin.setId(99L);
+        when(userRepository.findByUsername(ACTING_ADMIN)).thenReturn(Mono.just(admin));
+        when(adminAuditService.record(any(), any(), any(), any(), any(), any()))
+                .thenReturn(Mono.just(new AdminAuditLog()));
     }
 
     // ──────────────────────────── activateAccount ────────────────────────────
@@ -38,8 +51,9 @@ class AdminServiceTest {
         u.setActive(false);
         when(userRepository.findByUsername("bob@test.com")).thenReturn(Mono.just(u));
         when(userRepository.save(any())).thenReturn(Mono.just(u));
+        stubAuditTrail();
 
-        StepVerifier.create(adminService.activateAccount("bob@test.com"))
+        StepVerifier.create(adminService.activateAccount("bob@test.com", ACTING_ADMIN))
                 .expectNextMatches(r -> r.getStatus() == HttpStatus.OK
                         && r.getMessage().contains("activated"))
                 .verifyComplete();
@@ -50,7 +64,7 @@ class AdminServiceTest {
         User u = accountUser("bob@test.com", Role.AUDITOR);
         when(userRepository.findByUsername("bob@test.com")).thenReturn(Mono.just(u));
 
-        StepVerifier.create(adminService.activateAccount("bob@test.com"))
+        StepVerifier.create(adminService.activateAccount("bob@test.com", ACTING_ADMIN))
                 .expectNextMatches(r -> r.getStatus() == HttpStatus.OK
                         && r.getMessage().contains("already active"))
                 .verifyComplete();
@@ -60,7 +74,7 @@ class AdminServiceTest {
     void activateAccount_unknownEmail_emitsInvalidRecord() {
         when(userRepository.findByUsername("nobody@test.com")).thenReturn(Mono.empty());
 
-        StepVerifier.create(adminService.activateAccount("nobody@test.com"))
+        StepVerifier.create(adminService.activateAccount("nobody@test.com", ACTING_ADMIN))
                 .expectErrorMatches(e -> e instanceof InvalidRecord)
                 .verify();
     }
@@ -72,8 +86,9 @@ class AdminServiceTest {
         User u = accountUser("alice@test.com", Role.CLIENT);
         when(userRepository.findByUsername("alice@test.com")).thenReturn(Mono.just(u));
         when(userRepository.save(any())).thenReturn(Mono.just(u));
+        stubAuditTrail();
 
-        StepVerifier.create(adminService.deactivateAccount("alice@test.com"))
+        StepVerifier.create(adminService.deactivateAccount("alice@test.com", ACTING_ADMIN))
                 .expectNextMatches(r -> r.getStatus() == HttpStatus.OK
                         && r.getMessage().contains("deactivated"))
                 .verifyComplete();
@@ -85,7 +100,7 @@ class AdminServiceTest {
         u.setActive(false);
         when(userRepository.findByUsername("alice@test.com")).thenReturn(Mono.just(u));
 
-        StepVerifier.create(adminService.deactivateAccount("alice@test.com"))
+        StepVerifier.create(adminService.deactivateAccount("alice@test.com", ACTING_ADMIN))
                 .expectNextMatches(r -> r.getStatus() == HttpStatus.OK
                         && r.getMessage().contains("already inactive"))
                 .verifyComplete();
@@ -96,7 +111,7 @@ class AdminServiceTest {
         User u = accountUser("admin@test.com", Role.ADMIN);
         when(userRepository.findByUsername("admin@test.com")).thenReturn(Mono.just(u));
 
-        StepVerifier.create(adminService.deactivateAccount("admin@test.com"))
+        StepVerifier.create(adminService.deactivateAccount("admin@test.com", ACTING_ADMIN))
                 .expectErrorMatches(e -> e instanceof InvalidRecord
                         && e.getMessage().contains("cannot be deactivated"))
                 .verify();
@@ -106,7 +121,7 @@ class AdminServiceTest {
     void deactivateAccount_unknownEmail_emitsInvalidRecord() {
         when(userRepository.findByUsername("nobody@test.com")).thenReturn(Mono.empty());
 
-        StepVerifier.create(adminService.deactivateAccount("nobody@test.com"))
+        StepVerifier.create(adminService.deactivateAccount("nobody@test.com", ACTING_ADMIN))
                 .expectErrorMatches(e -> e instanceof InvalidRecord)
                 .verify();
     }
