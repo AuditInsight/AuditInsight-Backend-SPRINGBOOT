@@ -4,6 +4,9 @@ import com.diana.auditinsightbackendspringboot.Services.CustomOAuth2UserService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.io.buffer.DataBuffer;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.security.authentication.ReactiveAuthenticationManager;
 import org.springframework.security.config.annotation.method.configuration.EnableReactiveMethodSecurity;
 import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity;
@@ -19,7 +22,9 @@ import org.springframework.security.web.server.context.WebSessionServerSecurityC
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.reactive.CorsConfigurationSource;
 import org.springframework.web.cors.reactive.UrlBasedCorsConfigurationSource;
+import reactor.core.publisher.Mono;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 @Configuration
@@ -66,6 +71,25 @@ public class SecurityConfig {
                         .pathMatchers("/api/auditor/**").hasRole("AUDITOR")
                         .pathMatchers("/api/client/**").hasRole("CLIENT")
                         .anyExchange().authenticated()
+                )
+                // Every protected resource here is a JSON API, not a browser-rendered page.
+                // Without this, Spring's default entry point for an exchange that also has
+                // oauth2Login() configured is to 302-redirect unauthenticated requests to
+                // /oauth2/authorization/google — which breaks fetch/axios callers (a missing
+                // or expired JWT should produce a plain 401, not a redirect into Google's
+                // OAuth consent screen). The "Sign in with Google" flow itself is unaffected:
+                // it's initiated by navigating straight to /oauth2/authorization/google, which
+                // is handled by its own filter before this entry point is ever reached.
+                .exceptionHandling(exceptionHandling -> exceptionHandling
+                        .authenticationEntryPoint((exchange, ex) -> {
+                            var response = exchange.getResponse();
+                            response.setStatusCode(HttpStatus.UNAUTHORIZED);
+                            response.getHeaders().setContentType(MediaType.APPLICATION_JSON);
+                            DataBuffer buffer = response.bufferFactory().wrap(
+                                    "{\"error\":\"Unauthorized\",\"message\":\"Authentication required\"}"
+                                            .getBytes(StandardCharsets.UTF_8));
+                            return response.writeWith(Mono.just(buffer));
+                        })
                 )
                 .oauth2Login(auth -> auth
                         .authenticationManager(oAuth2AuthenticationManager())
