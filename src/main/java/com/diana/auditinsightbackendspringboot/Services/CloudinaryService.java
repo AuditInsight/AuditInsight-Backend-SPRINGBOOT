@@ -10,10 +10,13 @@ import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 import java.util.Map;
+import java.util.Set;
 
 @Service
 @Slf4j
 public class CloudinaryService {
+
+    private static final Set<String> IMAGE_TYPES = Set.of("png", "jpg", "jpeg");
 
     private Cloudinary cloudinary;
     @Value("${CLOUDINARY_CLOUD_NAME}")
@@ -35,12 +38,20 @@ public class CloudinaryService {
 
 
 
-    public Mono<String> upload(byte[] fileBytes, String folder) {
+    /**
+     * @param fileType the file's extension (pdf, xlsx, png, ...), used to pick the Cloudinary
+     *                 resource type. Non-image documents are uploaded as "raw" rather than "auto"
+     *                 (which Cloudinary resolves to "image" for PDFs) — Cloudinary blocks public
+     *                 delivery of PDF/ZIP files served through the image/video pipeline by default,
+     *                 which otherwise makes every stored document 401 on download.
+     */
+    public Mono<String> upload(byte[] fileBytes, String folder, String fileType) {
+        String resourceType = IMAGE_TYPES.contains(fileType == null ? "" : fileType.toLowerCase()) ? "image" : "raw";
         return Mono.fromCallable(() -> {
             try {
                 Map<?, ?> result = cloudinary.uploader().upload(fileBytes, ObjectUtils.asMap(
                         "folder", "auditinsight/" + folder,
-                        "resource_type", "auto"
+                        "resource_type", resourceType
                 ));
                 return (String) result.get("secure_url");
             } catch (Exception e) {

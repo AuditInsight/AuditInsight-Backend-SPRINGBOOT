@@ -115,49 +115,63 @@ public class EvidenceService {
                 })
                 .flatMap(fileType ->
                         assertCanUpload(organisationId, email)
-                                .flatMap(user ->
-                                        txnRepo.findById(transactionId)
-                                                .switchIfEmpty(Mono.error(new InvalidRecord("Transaction not found")))
-                                                .flatMap(txn -> {
-                                                    if (!txn.getOrganisationId().equals(organisationId)) {
-                                                        return Mono.error(new InvalidRecord(
-                                                                "Transaction does not belong to this organisation"));
-                                                    }
-                                                    // Read file bytes, upload to Cloudinary, save evidence
-                                                    return DataBufferUtils.join(filePart.content())
-                                                            .map(buf -> {
-                                                                byte[] bytes = new byte[buf.readableByteCount()];
-                                                                buf.read(bytes);
-                                                                DataBufferUtils.release(buf);
-                                                                return bytes;
-                                                            })
-                                                            .flatMap(bytes ->
-                                                                    cloudinaryService.upload(bytes, organisationId.toString()))
-                                                            .flatMap(url -> {
-                                                                Evidence ev = new Evidence();
-                                                                ev.setOrganisationId(organisationId);
-                                                                ev.setTransactionId(transactionId);
-                                                                ev.setDocumentName(documentName);
-                                                                ev.setFolder(folder);
-                                                                ev.setSubfolder(subfolder);
-                                                                ev.setFileUpload(url);
-                                                                ev.setFileType(fileType);
-                                                                ev.setNotes(notes);
-                                                                ev.setUploadedBy(user.getId());
-                                                                ev.setUploadedAt(LocalDateTime.now());
-                                                                return evidenceRepo.save(ev);
-                                                            })
-                                                            .flatMap(saved ->
-                                                                    txnService.recalculateEvidenceStatus(transactionId)
-                                                                            .then(notificationService.notifyEvidenceUploaded(
-                                                                                    organisationId,
-                                                                                    transactionId,
-                                                                                    documentName,
-                                                                                    user.getFullName()))
-                                                                            .thenReturn(toResponse(saved)));
-                                                })
-                                )
+                                .flatMap(user -> {
+                                    if (transactionId == null) {
+                                        // Standalone document — not linked to any transaction (e.g. uploaded
+                                        // purely to be signed), so there's no transaction status to recalculate.
+                                        return saveEvidenceFile(filePart, organisationId, null,
+                                                documentName, folder, subfolder, notes, fileType, user)
+                                                .map(this::toResponse);
+                                    }
+                                    return txnRepo.findById(transactionId)
+                                            .switchIfEmpty(Mono.error(new InvalidRecord("Transaction not found")))
+                                            .flatMap(txn -> {
+                                                if (!txn.getOrganisationId().equals(organisationId)) {
+                                                    return Mono.error(new InvalidRecord(
+                                                            "Transaction does not belong to this organisation"));
+                                                }
+                                                return saveEvidenceFile(filePart, organisationId, transactionId,
+                                                        documentName, folder, subfolder, notes, fileType, user)
+                                                        .flatMap(saved ->
+                                                                txnService.recalculateEvidenceStatus(transactionId)
+                                                                        .then(notificationService.notifyEvidenceUploaded(
+                                                                                organisationId,
+                                                                                transactionId,
+                                                                                documentName,
+                                                                                user.getFullName()))
+                                                                        .thenReturn(toResponse(saved)));
+                                            });
+                                })
                 );
+    }
+
+    private Mono<Evidence> saveEvidenceFile(FilePart filePart, UUID organisationId, UUID transactionId,
+                                            String documentName, String folder, String subfolder,
+                                            String notes, String fileType, User user) {
+        // Read file bytes, upload to Cloudinary, save evidence
+        return DataBufferUtils.join(filePart.content())
+                .map(buf -> {
+                    byte[] bytes = new byte[buf.readableByteCount()];
+                    buf.read(bytes);
+                    DataBufferUtils.release(buf);
+                    return bytes;
+                })
+                .flatMap(bytes ->
+                        cloudinaryService.upload(bytes, organisationId.toString(), fileType))
+                .flatMap(url -> {
+                    Evidence ev = new Evidence();
+                    ev.setOrganisationId(organisationId);
+                    ev.setTransactionId(transactionId);
+                    ev.setDocumentName(documentName);
+                    ev.setFolder(folder);
+                    ev.setSubfolder(subfolder);
+                    ev.setFileUpload(url);
+                    ev.setFileType(fileType);
+                    ev.setNotes(notes);
+                    ev.setUploadedBy(user.getId());
+                    ev.setUploadedAt(LocalDateTime.now());
+                    return evidenceRepo.save(ev);
+                });
     }
 
 
