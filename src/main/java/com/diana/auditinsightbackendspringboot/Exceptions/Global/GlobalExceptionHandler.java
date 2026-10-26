@@ -3,6 +3,7 @@ package com.diana.auditinsightbackendspringboot.Exceptions.Global;
 import com.diana.auditinsightbackendspringboot.Exceptions.Custom.ForbiddenException;
 import com.diana.auditinsightbackendspringboot.Exceptions.Custom.InvalidRecord;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -36,6 +37,16 @@ public class GlobalExceptionHandler {
         return Mono.just(ResponseEntity
                 .status(HttpStatus.BAD_REQUEST)
                 .body(Map.of("error", ex.getMessage())));
+    }
+
+    // A DB-level constraint rejected the write (e.g. a NOT NULL/FK/unique violation) —
+    // a client-fixable 400, not a server fault, so it shouldn't surface as a 500.
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public Mono<ResponseEntity<Map<String, String>>> handleDataIntegrityViolation(DataIntegrityViolationException ex) {
+        log.warn("Data integrity violation: {}", ex.getMessage());
+        return Mono.just(ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
+                .body(Map.of("error", "The request conflicts with existing data or violates a required constraint.")));
     }
 
     // Handles @Valid bean validation failures in WebFlux
