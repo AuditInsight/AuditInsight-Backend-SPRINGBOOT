@@ -65,7 +65,7 @@ class EvidenceServiceTest {
     void uploadEvidence_validFile_clientUser_succeeds() {
         mockActiveMember("client@test.com", 1L, Role.CLIENT);
         when(txnRepo.findById(TXN_ID)).thenReturn(Mono.just(txn(TXN_ID)));
-        when(cloudinaryService.upload(any(byte[].class), anyString()))
+        when(cloudinaryService.upload(any(byte[].class), anyString(), anyString()))
                 .thenReturn(Mono.just("https://res.cloudinary.com/test/invoice.pdf"));
         when(evidenceRepo.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
         when(txnService.recalculateEvidenceStatus(TXN_ID)).thenReturn(Mono.empty());
@@ -85,7 +85,7 @@ class EvidenceServiceTest {
     void uploadEvidence_jpegFile_succeeds() {
         mockActiveMember("member@test.com", 2L, Role.MEMBER);
         when(txnRepo.findById(TXN_ID)).thenReturn(Mono.just(txn(TXN_ID)));
-        when(cloudinaryService.upload(any(byte[].class), anyString()))
+        when(cloudinaryService.upload(any(byte[].class), anyString(), anyString()))
                 .thenReturn(Mono.just("https://res.cloudinary.com/test/receipt.jpg"));
         when(evidenceRepo.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
         when(txnService.recalculateEvidenceStatus(TXN_ID)).thenReturn(Mono.empty());
@@ -197,7 +197,7 @@ class EvidenceServiceTest {
         when(organisationRepo.findById(ORG_ID)).thenReturn(Mono.just(organisation(ORG_ID, OrganisationType.NGO)));
         mockActiveMember("client@test.com", 1L, Role.CLIENT);
         when(txnRepo.findById(TXN_ID)).thenReturn(Mono.just(txn(TXN_ID)));
-        when(cloudinaryService.upload(any(byte[].class), anyString()))
+        when(cloudinaryService.upload(any(byte[].class), anyString(), anyString()))
                 .thenReturn(Mono.just("https://res.cloudinary.com/test/donor-report.pdf"));
         when(evidenceRepo.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
         when(txnService.recalculateEvidenceStatus(TXN_ID)).thenReturn(Mono.empty());
