@@ -31,24 +31,26 @@ public class EvidenceController {
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @Operation(
             summary = "Upload evidence",
-            description = "Uploads a file (pdf, xls, xlsx, jpeg, jpg, png) and links it to a transaction. " +
-                    "File type is auto-detected from the filename. The file is stored in Cloudinary. " +
-                    "CLIENT and MEMBER only."
+            description = "Uploads a file (pdf, xls, xlsx, jpeg, jpg, png), optionally linking it to a " +
+                    "transaction — omit transactionId to upload a standalone document (e.g. one uploaded " +
+                    "purely to be signed). File type is auto-detected from the filename. The file is stored " +
+                    "in Cloudinary. CLIENT and MEMBER only."
     )
     public Mono<ResponseEntity<EvidenceResponse>> upload(
             Authentication auth,
             @RequestPart("file") FilePart filePart,
             @RequestPart("organisationId") String organisationId,
-            @RequestPart("transactionId") String transactionId,
+            @RequestPart(value = "transactionId", required = false) String transactionId,
             @RequestPart("documentName") String documentName,
             @RequestPart("folder") String folder,
             @RequestPart("subfolder") String subfolder,
             @RequestPart(value = "notes", required = false) String notes) {
+        UUID txnId = (transactionId == null || transactionId.isBlank()) ? null : UUID.fromString(transactionId);
         return evidenceService.uploadEvidence(
                         auth.getName(),
                         filePart,
                         UUID.fromString(organisationId),
-                        UUID.fromString(transactionId),
+                        txnId,
                         documentName,
                         folder,
                         subfolder,
