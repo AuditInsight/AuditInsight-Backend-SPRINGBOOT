@@ -101,13 +101,31 @@ class EvidenceServiceTest {
 
     @Test
     void uploadEvidence_disallowedFileType_returnsError() {
-        StepVerifier.create(service.uploadEvidence("client@test.com", filePart("report.docx"),
+        StepVerifier.create(service.uploadEvidence("client@test.com", filePart("report.exe"),
                         ORG_ID, TXN_ID, "Report",
                         "Purchases and Procurement", "Supplier Invoices", null))
                 .expectErrorMatches(e -> e instanceof InvalidRecord
-                        && e.getMessage().contains("docx")
+                        && e.getMessage().contains("exe")
                         && e.getMessage().contains("not allowed"))
                 .verify();
+    }
+
+    @Test
+    void uploadEvidence_docxFile_succeeds() {
+        mockActiveMember("client@test.com", 1L, Role.CLIENT);
+        when(txnRepo.findById(TXN_ID)).thenReturn(Mono.just(txn(TXN_ID)));
+        when(cloudinaryService.upload(any(byte[].class), anyString(), anyString()))
+                .thenReturn(Mono.just("https://res.cloudinary.com/test/report.docx"));
+        when(evidenceRepo.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
+        when(txnService.recalculateEvidenceStatus(TXN_ID)).thenReturn(Mono.empty());
+        when(notificationService.notifyEvidenceUploaded(any(), any(), anyString(), anyString()))
+                .thenReturn(Mono.empty());
+
+        StepVerifier.create(service.uploadEvidence("client@test.com", filePart("report.docx"),
+                        ORG_ID, TXN_ID, "Report",
+                        "Purchases and Procurement", "Supplier Invoices", null))
+                .expectNextMatches(r -> r.getFileType().equals("docx"))
+                .verifyComplete();
     }
 
     @Test

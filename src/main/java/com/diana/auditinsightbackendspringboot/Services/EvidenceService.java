@@ -20,7 +20,7 @@ import java.util.UUID;
 @Service
 public class EvidenceService {
 
-    private static final Set<String> ALLOWED_TYPES = Set.of("pdf", "xls", "xlsx", "jpeg", "jpg", "png");
+    private static final Set<String> ALLOWED_TYPES = Set.of("pdf", "xls", "xlsx", "jpeg", "jpg", "png", "docx");
 
     private final EvidenceRepository evidenceRepo;
     private final TransactionRepository txnRepo;
@@ -57,7 +57,7 @@ public class EvidenceService {
         String ext = filename.substring(filename.lastIndexOf('.') + 1).toLowerCase();
         if (!ALLOWED_TYPES.contains(ext)) {
             return Mono.error(new InvalidRecord(
-                    "File type '" + ext + "' is not allowed. Accepted types: pdf, xls, xlsx, jpeg, jpg, png"));
+                    "File type '" + ext + "' is not allowed. Accepted types: pdf, xls, xlsx, jpeg, jpg, png, docx"));
         }
         return Mono.just(ext);
     }

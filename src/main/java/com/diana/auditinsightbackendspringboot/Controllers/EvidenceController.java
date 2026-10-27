@@ -31,7 +31,7 @@ public class EvidenceController {
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @Operation(
             summary = "Upload evidence",
-            description = "Uploads a file (pdf, xls, xlsx, jpeg, jpg, png), optionally linking it to a " +
+            description = "Uploads a file (pdf, xls, xlsx, jpeg, jpg, png, docx), optionally linking it to a " +
                     "transaction — omit transactionId to upload a standalone document (e.g. one uploaded " +
                     "purely to be signed). File type is auto-detected from the filename. The file is stored " +
                     "in Cloudinary. CLIENT and MEMBER only."
