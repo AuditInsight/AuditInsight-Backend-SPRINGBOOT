@@ -45,7 +45,11 @@ public class CloudinaryService {
      *                 resource type. Non-image documents are uploaded as "raw" rather than "auto"
      *                 (which Cloudinary resolves to "image" for PDFs) — Cloudinary blocks public
      *                 delivery of PDF/ZIP files served through the image/video pipeline by default,
-     *                 which otherwise makes every stored document 401 on download.
+     *                 which otherwise makes every stored document 401 on download. Delivery type and
+     *                 access mode are also forced to public/upload explicitly: this account's default
+     *                 for non-image uploads is "authenticated", which otherwise denies delivery of
+     *                 every raw file with a "deny or ACL failure" error even once resource_type is
+     *                 correct.
      */
     public Mono<String> upload(byte[] fileBytes, String folder, String fileType) {
         String resourceType = IMAGE_TYPES.contains(fileType == null ? "" : fileType.toLowerCase()) ? "image" : "raw";
@@ -54,6 +58,8 @@ public class CloudinaryService {
                 Map<String, Object> options = new HashMap<>();
                 options.put("folder", "auditinsight/" + folder);
                 options.put("resource_type", resourceType);
+                options.put("type", "upload");
+                options.put("access_mode", "public");
                 if ("raw".equals(resourceType)) {
                     // Unlike "image", Cloudinary never appends a format/extension to a "raw"
                     // public ID on its own, so without one the stored URL has no extension and
