@@ -8,6 +8,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.ExchangeStrategies;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
@@ -91,10 +92,31 @@ public class CloudinaryService {
     public Mono<byte[]> downloadOriginal(String fileUrl) {
         return Mono.fromCallable(() -> signedDownloadUrl(fileUrl))
                 .subscribeOn(Schedulers.boundedElastic())
-                .flatMap(url -> webClient.get().uri(url).retrieve().bodyToMono(byte[].class));
+                .flatMap(url -> fetch(url).onErrorResume(WebClientResponseException.Unauthorized.class,
+                        uploadUrlError -> Mono.fromCallable(() -> authenticatedSignedDownloadUrl(fileUrl))
+                                .subscribeOn(Schedulers.boundedElastic())
+                                .flatMap(this::fetch)
+                                .onErrorMap(authenticatedUrlError -> new IllegalStateException(
+                                        "Cloudinary rejected signed upload delivery with "
+                                                + uploadUrlError.getStatusCode()
+                                                + " and authenticated delivery with "
+                                                + authenticatedUrlError.getMessage(),
+                                        authenticatedUrlError))));
     }
 
     String signedDownloadUrl(String fileUrl) throws Exception {
+        return signedDownloadUrl(fileUrl, null);
+    }
+
+    String authenticatedSignedDownloadUrl(String fileUrl) throws Exception {
+        return signedDownloadUrl(fileUrl, "authenticated");
+    }
+
+    private Mono<byte[]> fetch(String url) {
+        return webClient.get().uri(url).retrieve().bodyToMono(byte[].class);
+    }
+
+    private String signedDownloadUrl(String fileUrl, String forcedDeliveryType) throws Exception {
         URI uri = URI.create(fileUrl);
         if (!"https".equalsIgnoreCase(uri.getScheme())
                 || !"res.cloudinary.com".equalsIgnoreCase(uri.getHost())
@@ -127,6 +149,10 @@ public class CloudinaryService {
             publicId = publicId.substring(0, extension);
         }
 
+        if (forcedDeliveryType != null) {
+            return buildSignedDeliveryUrl(resourceType, forcedDeliveryType, publicId, version, format);
+        }
+
         if (!"upload".equals(deliveryType)) {
             Map<String, Object> options = new HashMap<>();
             options.put("resource_type", resourceType);
@@ -135,6 +161,11 @@ public class CloudinaryService {
             return cloudinary.privateDownload(publicId, format, options);
         }
 
+        return buildSignedDeliveryUrl(resourceType, deliveryType, publicId, version, format);
+    }
+
+    private String buildSignedDeliveryUrl(String resourceType, String deliveryType, String publicId,
+                                          String version, String format) {
         var url = cloudinary.url()
                 .resourceType(resourceType)
                 .type(deliveryType)

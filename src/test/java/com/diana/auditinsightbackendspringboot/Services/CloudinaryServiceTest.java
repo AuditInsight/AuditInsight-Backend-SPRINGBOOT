@@ -47,6 +47,16 @@ class CloudinaryServiceTest {
     }
 
     @Test
+    void authenticatedSignedDownloadUrlSupportsLegacyAssetsWithRestrictedPublicDelivery() throws Exception {
+        String signedUrl = service.authenticatedSignedDownloadUrl(
+                "https://res.cloudinary.com/test-cloud/raw/upload/v123/auditinsight/org/file.pdf");
+
+        assertTrue(signedUrl.startsWith("https://res.cloudinary.com/test-cloud/raw/authenticated/s--"));
+        assertTrue(signedUrl.contains("/v123/auditinsight/org/file.pdf"));
+        assertFalse(signedUrl.contains("test-secret"));
+    }
+
+    @Test
     void signedDownloadUrlRejectsUntrustedHosts() {
         assertThrows(IllegalArgumentException.class,
                 () -> service.signedDownloadUrl("https://attacker.example/file.pdf"));
