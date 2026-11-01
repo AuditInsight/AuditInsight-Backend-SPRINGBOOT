@@ -24,7 +24,7 @@ import java.util.UUID;
 
 /**
  * Single shared place to resolve "is this user an active member of this organisation, and (for
- * gated operations) is the organisation's trial/subscription still current" — replaces what used
+ * gated operations) is the organisation's paid subscription still current" — replaces what used
  * to be three independent copies of the same membership-resolution logic in TransactionService,
  * ReviewQueueService and EvidenceService.
  */
@@ -81,7 +81,7 @@ public class OrgAccessService {
                                 : Mono.just(new OrgMemberContext(user, member))));
     }
 
-    /** Active org membership, gated on the organisation's trial/subscription still being current. */
+    /** Active org membership, gated on the organisation having a current paid subscription. */
     public Mono<OrgMemberContext> resolveGatedMember(UUID organisationId, String email) {
         return resolveActiveMember(organisationId, email)
                 .flatMap(ctx -> assertSubscriptionCurrent(organisationId).thenReturn(ctx));
@@ -90,16 +90,15 @@ public class OrgAccessService {
     private Mono<Void> assertSubscriptionCurrent(UUID organisationId) {
         return subscriptionRepo.findFirstByOrganisationIdOrderByCreatedAtDesc(organisationId)
                 .switchIfEmpty(Mono.error(new ForbiddenException(
-                        "Your organisation's trial/subscription has expired. Please subscribe to continue.")))
+                        "A paid subscription is required to use this feature. Please complete checkout to continue.")))
                 .flatMap(this::assertNotExpired);
     }
 
     private Mono<Void> assertNotExpired(Subscription subscription) {
-        boolean active = (subscription.getStatus() == SubscriptionStatus.TRIAL
-                || subscription.getStatus() == SubscriptionStatus.ACTIVE)
+        boolean active = subscription.getStatus() == SubscriptionStatus.ACTIVE
                 && subscription.getEndDate() != null
                 && subscription.getEndDate().isAfter(LocalDateTime.now());
         return active ? Mono.empty() : Mono.error(new ForbiddenException(
-                "Your organisation's trial/subscription has expired. Please subscribe to continue."));
+                "A paid subscription is required to use this feature. Please complete checkout to continue."));
     }
 }
