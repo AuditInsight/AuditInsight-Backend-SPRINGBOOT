@@ -6,6 +6,7 @@ import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.web.util.UriComponentsBuilder;
 import org.springframework.web.reactive.function.client.ExchangeStrategies;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
@@ -93,15 +94,15 @@ public class CloudinaryService {
         return Mono.fromCallable(() -> signedDownloadUrl(fileUrl))
                 .subscribeOn(Schedulers.boundedElastic())
                 .flatMap(url -> fetch(url).onErrorResume(WebClientResponseException.Unauthorized.class,
-                        uploadUrlError -> Mono.fromCallable(() -> authenticatedSignedDownloadUrl(fileUrl))
+                        deliveryUrlError -> Mono.fromCallable(() -> assetIdDownloadUrl(fileUrl))
                                 .subscribeOn(Schedulers.boundedElastic())
                                 .flatMap(this::fetch)
-                                .onErrorMap(authenticatedUrlError -> new IllegalStateException(
-                                        "Cloudinary rejected signed upload delivery with "
-                                                + uploadUrlError.getStatusCode()
-                                                + " and authenticated delivery with "
-                                                + authenticatedUrlError.getMessage(),
-                                        authenticatedUrlError))));
+                                .onErrorMap(assetDownloadError -> new IllegalStateException(
+                                        "Cloudinary rejected signed delivery with "
+                                                + deliveryUrlError.getStatusCode()
+                                                + " and asset-ID download with "
+                                                + assetDownloadError.getMessage(),
+                                        assetDownloadError))));
     }
 
     String signedDownloadUrl(String fileUrl) throws Exception {
@@ -112,11 +113,61 @@ public class CloudinaryService {
         return signedDownloadUrl(fileUrl, "authenticated");
     }
 
+    String assetIdDownloadUrl(String fileUrl) throws Exception {
+        CloudinaryAsset asset = parseCloudinaryAsset(fileUrl);
+        Map<?, ?> resource = cloudinary.api().resource(asset.publicId(), ObjectUtils.asMap(
+                "resource_type", asset.resourceType(),
+                "type", asset.deliveryType()));
+        Object assetIdValue = resource.get("asset_id");
+        if (!(assetIdValue instanceof String assetId) || !assetId.matches("[A-Za-z0-9_-]+")) {
+            throw new IllegalStateException("Cloudinary did not return a valid asset ID for evidence");
+        }
+        return buildAssetIdDownloadUrl(assetId);
+    }
+
+    String buildAssetIdDownloadUrl(String assetId) {
+        long timestamp = Instant.now().getEpochSecond();
+        Map<String, Object> parameters = new HashMap<>();
+        parameters.put("asset_id", assetId);
+        parameters.put("attachment", "true");
+        parameters.put("expires_at", timestamp + 300);
+        parameters.put("timestamp", timestamp);
+        String signature = cloudinary.apiSignRequest(parameters, apiSecret);
+        parameters.put("api_key", apiKey);
+        parameters.put("signature", signature);
+
+        UriComponentsBuilder url = UriComponentsBuilder.fromUriString(
+                "https://api.cloudinary.com/v1_1/" + cloudName + "/asset/download");
+        parameters.forEach((key, value) -> url.queryParam(key, value));
+        return url
+                .build()
+                .encode()
+                .toUriString();
+    }
+
     private Mono<byte[]> fetch(String url) {
         return webClient.get().uri(url).retrieve().bodyToMono(byte[].class);
     }
 
     private String signedDownloadUrl(String fileUrl, String forcedDeliveryType) throws Exception {
+        CloudinaryAsset asset = parseCloudinaryAsset(fileUrl);
+        String deliveryType = forcedDeliveryType == null ? asset.deliveryType() : forcedDeliveryType;
+        if (forcedDeliveryType != null) {
+            return buildSignedDeliveryUrl(asset.resourceType(), deliveryType, asset.publicId(),
+                    asset.version(), asset.format());
+        }
+        if (!"upload".equals(deliveryType)) {
+            Map<String, Object> options = new HashMap<>();
+            options.put("resource_type", asset.resourceType());
+            options.put("type", deliveryType);
+            options.put("expires_at", Instant.now().plusSeconds(300).getEpochSecond());
+            return cloudinary.privateDownload(asset.publicId(), asset.format(), options);
+        }
+        return buildSignedDeliveryUrl(asset.resourceType(), deliveryType, asset.publicId(),
+                asset.version(), asset.format());
+    }
+
+    private CloudinaryAsset parseCloudinaryAsset(String fileUrl) {
         URI uri = URI.create(fileUrl);
         if (!"https".equalsIgnoreCase(uri.getScheme())
                 || !"res.cloudinary.com".equalsIgnoreCase(uri.getHost())
@@ -149,19 +200,11 @@ public class CloudinaryService {
             publicId = publicId.substring(0, extension);
         }
 
-        if (forcedDeliveryType != null) {
-            return buildSignedDeliveryUrl(resourceType, forcedDeliveryType, publicId, version, format);
-        }
+        return new CloudinaryAsset(resourceType, deliveryType, version, publicId, format);
+    }
 
-        if (!"upload".equals(deliveryType)) {
-            Map<String, Object> options = new HashMap<>();
-            options.put("resource_type", resourceType);
-            options.put("type", deliveryType);
-            options.put("expires_at", Instant.now().plusSeconds(300).getEpochSecond());
-            return cloudinary.privateDownload(publicId, format, options);
-        }
-
-        return buildSignedDeliveryUrl(resourceType, deliveryType, publicId, version, format);
+    private record CloudinaryAsset(String resourceType, String deliveryType, String version,
+                                   String publicId, String format) {
     }
 
     private String buildSignedDeliveryUrl(String resourceType, String deliveryType, String publicId,
