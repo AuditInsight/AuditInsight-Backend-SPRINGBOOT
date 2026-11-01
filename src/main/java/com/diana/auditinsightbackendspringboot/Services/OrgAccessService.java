@@ -51,12 +51,15 @@ public class OrgAccessService {
     private final UserRepository userRepo;
     private final OrganisationMemberRepository memberRepo;
     private final SubscriptionRepository subscriptionRepo;
+    private final PlatformFreeAccessService platformFreeAccessService;
 
     public OrgAccessService(UserRepository userRepo, OrganisationMemberRepository memberRepo,
-                             SubscriptionRepository subscriptionRepo) {
+                             SubscriptionRepository subscriptionRepo,
+                             PlatformFreeAccessService platformFreeAccessService) {
         this.userRepo = userRepo;
         this.memberRepo = memberRepo;
         this.subscriptionRepo = subscriptionRepo;
+        this.platformFreeAccessService = platformFreeAccessService;
     }
 
     public record OrgMemberContext(User user, OrganisationMember member) {
@@ -84,7 +87,10 @@ public class OrgAccessService {
     /** Active org membership, gated on the organisation having a current paid subscription. */
     public Mono<OrgMemberContext> resolveGatedMember(UUID organisationId, String email) {
         return resolveActiveMember(organisationId, email)
-                .flatMap(ctx -> assertSubscriptionCurrent(organisationId).thenReturn(ctx));
+                .flatMap(ctx -> platformFreeAccessService.isEnabled()
+                        .flatMap(freeAccess -> freeAccess
+                                ? Mono.just(ctx)
+                                : assertSubscriptionCurrent(organisationId).thenReturn(ctx)));
     }
 
     private Mono<Void> assertSubscriptionCurrent(UUID organisationId) {

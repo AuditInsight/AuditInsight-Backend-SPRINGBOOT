@@ -29,6 +29,7 @@ class OrgAccessServiceTest {
     @Mock private UserRepository userRepository;
     @Mock private OrganisationMemberRepository memberRepository;
     @Mock private SubscriptionRepository subscriptionRepository;
+    @Mock private PlatformFreeAccessService platformFreeAccessService;
 
     private final UUID organisationId = UUID.randomUUID();
     private final String email = "client@test.com";
@@ -36,7 +37,9 @@ class OrgAccessServiceTest {
 
     @BeforeEach
     void setUp() {
-        orgAccessService = new OrgAccessService(userRepository, memberRepository, subscriptionRepository);
+        orgAccessService = new OrgAccessService(
+                userRepository, memberRepository, subscriptionRepository, platformFreeAccessService);
+        when(platformFreeAccessService.isEnabled()).thenReturn(Mono.just(false));
 
         User user = new User();
         user.setId(1L);
@@ -57,6 +60,15 @@ class OrgAccessServiceTest {
         Subscription subscription = subscription(SubscriptionStatus.ACTIVE, LocalDateTime.now().plusDays(30));
         when(subscriptionRepository.findFirstByOrganisationIdOrderByCreatedAtDesc(organisationId))
                 .thenReturn(Mono.just(subscription));
+
+        StepVerifier.create(orgAccessService.resolveGatedMember(organisationId, email))
+                .expectNextMatches(context -> context.role() == Role.CLIENT)
+                .verifyComplete();
+    }
+
+    @Test
+    void resolveGatedMember_allowsUnpaidOrganisationDuringPlatformFreeAccess() {
+        when(platformFreeAccessService.isEnabled()).thenReturn(Mono.just(true));
 
         StepVerifier.create(orgAccessService.resolveGatedMember(organisationId, email))
                 .expectNextMatches(context -> context.role() == Role.CLIENT)

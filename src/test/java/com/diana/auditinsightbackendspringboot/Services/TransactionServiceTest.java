@@ -36,6 +36,7 @@ class TransactionServiceTest {
     @Mock private OrganisationMemberRepository memberRepo;
     @Mock private UserRepository userRepo;
     @Mock private SubscriptionRepository subscriptionRepo;
+    @Mock private PlatformFreeAccessService platformFreeAccessService;
     @Mock private NotificationService notificationService;
 
     private TransactionService service;
@@ -46,9 +47,11 @@ class TransactionServiceTest {
 
     @BeforeEach
     void setUp() {
-        OrgAccessService orgAccessService = new OrgAccessService(userRepo, memberRepo, subscriptionRepo);
+        OrgAccessService orgAccessService = new OrgAccessService(
+                userRepo, memberRepo, subscriptionRepo, platformFreeAccessService);
         service = new TransactionService(txnRepo, evidenceRepo, reviewRepo, organisationRepo, orgAccessService,
                 userRepo, notificationService);
+        lenient().when(platformFreeAccessService.isEnabled()).thenReturn(Mono.just(false));
         lenient().when(organisationRepo.findById(ORG_ID))
                 .thenReturn(Mono.just(organisation(ORG_ID, OrganisationType.PRIVATE)));
         lenient().when(subscriptionRepo.findFirstByOrganisationIdOrderByCreatedAtDesc(ORG_ID))

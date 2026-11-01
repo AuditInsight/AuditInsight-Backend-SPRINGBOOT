@@ -34,6 +34,7 @@ class ReviewQueueServiceTest {
     @Mock private OrganisationMemberRepository memberRepo;
     @Mock private UserRepository userRepo;
     @Mock private SubscriptionRepository subscriptionRepo;
+    @Mock private PlatformFreeAccessService platformFreeAccessService;
     @Mock private NotificationService notificationService;
 
     private ReviewQueueService service;
@@ -45,8 +46,10 @@ class ReviewQueueServiceTest {
 
     @BeforeEach
     void setUp() {
-        OrgAccessService orgAccessService = new OrgAccessService(userRepo, memberRepo, subscriptionRepo);
+        OrgAccessService orgAccessService = new OrgAccessService(
+                userRepo, memberRepo, subscriptionRepo, platformFreeAccessService);
         service = new ReviewQueueService(reviewRepo, txnRepo, orgAccessService, notificationService);
+        lenient().when(platformFreeAccessService.isEnabled()).thenReturn(Mono.just(false));
         lenient().when(subscriptionRepo.findFirstByOrganisationIdOrderByCreatedAtDesc(ORG_ID))
                 .thenReturn(Mono.just(activeSubscription(ORG_ID)));
     }

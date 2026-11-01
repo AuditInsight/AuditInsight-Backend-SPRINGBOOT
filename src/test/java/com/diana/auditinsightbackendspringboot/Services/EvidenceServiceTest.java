@@ -37,6 +37,7 @@ class EvidenceServiceTest {
     @Mock private OrganisationMemberRepository memberRepo;
     @Mock private UserRepository userRepo;
     @Mock private SubscriptionRepository subscriptionRepo;
+    @Mock private PlatformFreeAccessService platformFreeAccessService;
     @Mock private TransactionService txnService;
     @Mock private CloudinaryService cloudinaryService;
     @Mock private NotificationService notificationService;
@@ -50,9 +51,11 @@ class EvidenceServiceTest {
 
     @BeforeEach
     void setUp() {
-        OrgAccessService orgAccessService = new OrgAccessService(userRepo, memberRepo, subscriptionRepo);
+        OrgAccessService orgAccessService = new OrgAccessService(
+                userRepo, memberRepo, subscriptionRepo, platformFreeAccessService);
         service = new EvidenceService(evidenceRepo, txnRepo, organisationRepo, orgAccessService,
                 txnService, cloudinaryService, notificationService);
+        lenient().when(platformFreeAccessService.isEnabled()).thenReturn(Mono.just(false));
         lenient().when(organisationRepo.findById(ORG_ID))
                 .thenReturn(Mono.just(organisation(ORG_ID, OrganisationType.PRIVATE)));
         lenient().when(subscriptionRepo.findFirstByOrganisationIdOrderByCreatedAtDesc(ORG_ID))
