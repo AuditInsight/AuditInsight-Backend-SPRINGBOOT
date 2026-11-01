@@ -17,7 +17,6 @@ import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
 import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
 import org.apache.pdfbox.rendering.PDFRenderer;
 import org.springframework.stereotype.Service;
-import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
@@ -54,24 +53,23 @@ public class SignedDocumentService {
     private static final float BOTTOM_MARGIN = 40f;
     private static final float GAP_BELOW_CONTENT = 18f;
     private static final float INLINE_HEADER_HEIGHT = 34f;
-    private static final int MAX_DOWNLOAD_BYTES = 30 * 1024 * 1024;
 
     private final EvidenceRepository evidenceRepo;
     private final EvidenceSignatureRepository signatureRepo;
     private final UserRepository userRepo;
     private final OrgAccessService orgAccessService;
-    private final WebClient webClient = WebClient.builder()
-            .codecs(c -> c.defaultCodecs().maxInMemorySize(MAX_DOWNLOAD_BYTES))
-            .build();
+    private final CloudinaryService cloudinaryService;
 
     public SignedDocumentService(EvidenceRepository evidenceRepo,
                                  EvidenceSignatureRepository signatureRepo,
                                  UserRepository userRepo,
-                                 OrgAccessService orgAccessService) {
+                                 OrgAccessService orgAccessService,
+                                 CloudinaryService cloudinaryService) {
         this.evidenceRepo = evidenceRepo;
         this.signatureRepo = signatureRepo;
         this.userRepo = userRepo;
         this.orgAccessService = orgAccessService;
+        this.cloudinaryService = cloudinaryService;
     }
 
     /** One signer as printed on the signature page. */
@@ -146,7 +144,7 @@ public class SignedDocumentService {
         if (url == null || url.isBlank()) {
             return Mono.error(new InvalidRecord("This evidence has no stored file"));
         }
-        return webClient.get().uri(url).retrieve().bodyToMono(byte[].class)
+        return cloudinaryService.downloadOriginal(url)
                 .onErrorMap(e -> !(e instanceof InvalidRecord),
                         e -> new InvalidRecord("Could not fetch the original file: " + e.getMessage()));
     }
