@@ -94,12 +94,53 @@ public class CloudinaryService {
                     options.put("public_id", UUID.randomUUID() + "." + fileType);
                 }
                 Map<?, ?> result = cloudinary.uploader().upload(fileBytes, options);
-                return (String) result.get("secure_url");
+                return withoutDeliverySignature((String) result.get("secure_url"));
             } catch (Exception e) {
                 log.error("Cloudinary upload failed for folder '{}': {}", folder, e.getMessage(), e);
                 throw new RuntimeException("File upload failed: " + e.getMessage());
             }
         }).subscribeOn(Schedulers.boundedElastic());
+    }
+
+    /** True when the URL points at a file that is not publicly reachable (authenticated or private delivery). */
+    public static boolean isPrivateUrl(String fileUrl) {
+        return fileUrl != null && (fileUrl.contains("/authenticated/") || fileUrl.contains("/private/"));
+    }
+
+    /**
+     * Moves a stored file from public ("upload") to private ("authenticated") delivery and returns its new URL.
+     * The bytes are unchanged (so recorded SHA-256 fingerprints stay valid); the old public URL stops working once
+     * Cloudinary's CDN cache is invalidated. Files that are already private are returned unchanged.
+     */
+    public Mono<String> makePrivate(String fileUrl) {
+        return Mono.fromCallable(() -> {
+            CloudinaryAsset asset = parseCloudinaryAsset(fileUrl);
+            if (!"upload".equals(asset.deliveryType())) {
+                return fileUrl;
+            }
+            Map<?, ?> result = cloudinary.uploader().rename(asset.publicId(), asset.publicId(), ObjectUtils.asMap(
+                    "resource_type", asset.resourceType(),
+                    "type", "upload",
+                    "to_type", "authenticated",
+                    "invalidate", true,
+                    "overwrite", false));
+            Object url = result.get("secure_url");
+            if (!(url instanceof String newUrl) || newUrl.isBlank()) {
+                throw new IllegalStateException("Cloudinary did not return the new URL for " + asset.publicId());
+            }
+            return withoutDeliverySignature(newUrl);
+        }).subscribeOn(Schedulers.boundedElastic());
+    }
+
+    /** Permanently deletes a stored file (used to clean up after storage checks). */
+    public Mono<Void> delete(String fileUrl) {
+        return Mono.fromCallable(() -> {
+            CloudinaryAsset asset = parseCloudinaryAsset(fileUrl);
+            return cloudinary.uploader().destroy(asset.publicId(), ObjectUtils.asMap(
+                    "resource_type", asset.resourceType(),
+                    "type", asset.deliveryType(),
+                    "invalidate", true));
+        }).subscribeOn(Schedulers.boundedElastic()).then();
     }
 
     public Mono<byte[]> downloadOriginal(String fileUrl) {
@@ -179,8 +220,17 @@ public class CloudinaryService {
                 asset.version(), asset.format());
     }
 
+    /**
+     * Cloudinary returns private (authenticated) URLs with a permanent delivery signature ("/s--…--/"), which lets
+     * anyone holding the URL open the file indefinitely. We never store or use that form: files are fetched only
+     * through short-lived signed API downloads, so the signature segment is dropped.
+     */
+    static String withoutDeliverySignature(String fileUrl) {
+        return fileUrl == null ? null : fileUrl.replaceFirst("/s--[A-Za-z0-9_-]+--/", "/");
+    }
+
     private CloudinaryAsset parseCloudinaryAsset(String fileUrl) {
-        URI uri = URI.create(fileUrl);
+        URI uri = URI.create(withoutDeliverySignature(fileUrl));
         if (!"https".equalsIgnoreCase(uri.getScheme())
                 || !"res.cloudinary.com".equalsIgnoreCase(uri.getHost())
                 || uri.getRawQuery() != null
