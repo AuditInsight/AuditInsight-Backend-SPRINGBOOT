@@ -1,6 +1,8 @@
 package com.diana.auditinsightbackendspringboot.Services;
 
 import com.diana.auditinsightbackendspringboot.DTOs.EvidenceResponse;
+import com.diana.auditinsightbackendspringboot.DTOs.RequestMeta;
+import com.diana.auditinsightbackendspringboot.Enum.AuditEventType;
 import com.diana.auditinsightbackendspringboot.Enum.Permission;
 import com.diana.auditinsightbackendspringboot.Exceptions.Custom.ForbiddenException;
 import com.diana.auditinsightbackendspringboot.Exceptions.Custom.InvalidRecord;
@@ -12,6 +14,7 @@ import org.springframework.http.codec.multipart.FilePart;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.util.function.Tuples;
 
 import java.time.LocalDateTime;
 import java.util.Map;
@@ -33,6 +36,7 @@ public class EvidenceService {
     private final CloudinaryService cloudinaryService;
     private final NotificationService notificationService;
     private final EvidenceSignatureRepository signatureRepo;
+    private final AuditTrailService auditTrail;
 
     public EvidenceService(EvidenceRepository evidenceRepo,
                            TransactionRepository txnRepo,
@@ -41,7 +45,8 @@ public class EvidenceService {
                            TransactionService txnService,
                            CloudinaryService cloudinaryService,
                            NotificationService notificationService,
-                           EvidenceSignatureRepository signatureRepo) {
+                           EvidenceSignatureRepository signatureRepo,
+                           AuditTrailService auditTrail) {
         this.evidenceRepo = evidenceRepo;
         this.txnRepo = txnRepo;
         this.organisationRepo = organisationRepo;
@@ -50,6 +55,7 @@ public class EvidenceService {
         this.cloudinaryService = cloudinaryService;
         this.notificationService = notificationService;
         this.signatureRepo = signatureRepo;
+        this.auditTrail = auditTrail;
     }
 
 
@@ -172,10 +178,16 @@ public class EvidenceService {
                     DataBufferUtils.release(buf);
                     return bytes;
                 })
-                .flatMap(bytes ->
-                        cloudinaryService.upload(bytes, organisationId.toString(), fileType))
-                .flatMap(url -> {
+                .flatMap(bytes -> {
+                    // Fingerprint the original so any later change to the stored file can be detected.
+                    String sha256 = SignedVersionService.sha256Hex(bytes);
+                    return cloudinaryService.upload(bytes, organisationId.toString(), fileType)
+                            .map(url -> Tuples.of(url, sha256));
+                })
+                .flatMap(stored -> {
+                    String url = stored.getT1();
                     Evidence ev = new Evidence();
+                    ev.setOriginalSha256(stored.getT2());
                     ev.setOrganisationId(organisationId);
                     ev.setTransactionId(transactionId);
                     ev.setDocumentName(documentName);
@@ -186,7 +198,11 @@ public class EvidenceService {
                     ev.setNotes(notes);
                     ev.setUploadedBy(user.getId());
                     ev.setUploadedAt(LocalDateTime.now());
-                    return evidenceRepo.save(ev);
+                    return evidenceRepo.save(ev).flatMap(saved -> auditTrail.record(saved,
+                                    AuditEventType.DOCUMENT_UPLOADED, user, RequestMeta.NONE,
+                                    new AuditTrailService.Detail(0, saved.getOriginalSha256(),
+                                            "Uploaded " + filePart.filename()))
+                            .thenReturn(saved));
                 });
     }
 

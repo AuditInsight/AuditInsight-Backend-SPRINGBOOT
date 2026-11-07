@@ -44,4 +44,19 @@ public class EvidenceSignature {
 
     @Column("request_id")
     private UUID requestId;
+
+    // The stored signed version this signature first appeared in; null for signatures made before versioning.
+    @Column("document_version_id")
+    private UUID documentVersionId;
+
+    // SHA-256 of the document the signer placed the signature on; null when the signature wasn't placed.
+    @Column("base_sha256")
+    private String baseSha256;
+
+    // Where the signature came from (client IP behind the proxy, and browser), as evidence of who signed.
+    @Column("signer_ip")
+    private String signerIp;
+
+    @Column("signer_user_agent")
+    private String signerUserAgent;
 }
