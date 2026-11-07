@@ -241,6 +241,17 @@ class AdminEndpointsSecurityTest {
     }
 
     @Test
+    void organisationFreeAccess_onlyAdminAllowed() {
+        String base = "/api/admin/organisations/" + organisationId;
+        Map<String, Object> reason = Map.of("reason", "Ended pilot");
+        assertForbiddenForNonAdmins(token -> get(token, base + "/access"));
+        assertForbiddenForNonAdmins(token -> post(token, base + "/free-access/end", reason));
+        get(adminToken, base + "/access").expectStatus().isOk();
+        // Nothing free to end on a brand-new organisation: a clear 400, not a server error.
+        post(adminToken, base + "/free-access/end", reason).expectStatus().isBadRequest();
+    }
+
+    @Test
     void trialCampaigns_onlyAdminAllowed() {
         Map<String, Object> body = Map.of("name", "Launch", "durationDays", 30, "reason", "Launch month");
         assertForbiddenForNonAdmins(token -> get(token, "/api/admin/trial-campaigns"));

@@ -60,4 +60,7 @@ public interface PaymentRepository extends ReactiveCrudRepository<Payment, UUID>
 
     /** Successful payments that never got their paid period (activation failed after the status was saved). */
     Flux<Payment> findAllByStatusAndSubscriptionIdIsNull(PaymentStatus status);
+
+    /** True when a successful payment bought this period (anything else is free access). */
+    Mono<Boolean> existsBySubscriptionIdAndStatus(UUID subscriptionId, PaymentStatus status);
 }

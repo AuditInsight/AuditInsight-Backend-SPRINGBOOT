@@ -232,3 +232,13 @@ CREATE TABLE IF NOT EXISTS trial_grant_events (
     details         VARCHAR(4000),
     created_at      TIMESTAMP   NOT NULL
 );
+
+-- V21 (+V27 reason): platform-wide emergency override settings.
+CREATE TABLE IF NOT EXISTS platform_access_settings (
+    setting_key            VARCHAR(32) PRIMARY KEY,
+    free_access_started_at TIMESTAMP,
+    free_access_ends_at    TIMESTAMP,
+    updated_at             TIMESTAMP NOT NULL,
+    updated_by             BIGINT,
+    reason                 VARCHAR(4000)
+);

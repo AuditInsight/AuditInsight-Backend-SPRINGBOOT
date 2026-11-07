@@ -93,6 +93,11 @@ public class EntitlementService {
         return new Entitlement(AccessBasis.PAYMENT_REQUIRED, null, null, nextPaid, openTrial, null);
     }
 
+    /** Whether this paid period is running at {@code now}. */
+    public static boolean isCurrentPeriod(Subscription s, LocalDateTime now) {
+        return isCurrent(s, now);
+    }
+
     static boolean isCurrent(Subscription s, LocalDateTime now) {
         return s.getEndDate() != null && now.isBefore(s.getEndDate())
                 && (s.getStartDate() == null || !now.isBefore(s.getStartDate()));
