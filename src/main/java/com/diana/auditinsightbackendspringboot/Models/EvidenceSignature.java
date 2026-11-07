@@ -48,4 +48,8 @@ public class EvidenceSignature {
     // The stored signed version this signature first appeared in; null for signatures made before versioning.
     @Column("document_version_id")
     private UUID documentVersionId;
+
+    // SHA-256 of the document the signer placed the signature on; null when the signature wasn't placed.
+    @Column("base_sha256")
+    private String baseSha256;
 }

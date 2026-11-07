@@ -22,8 +22,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.UUID;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
@@ -45,6 +47,7 @@ class SignedVersionServiceTest {
     private SignedVersionService service;
 
     private static final String EMAIL = "signer@test.com";
+    private static final byte[] BASE = "original-pdf".getBytes(StandardCharsets.UTF_8);
     private static final Long USER_ID = 7L;
     private static final String STORED_URL = "https://res.cloudinary.com/demo/raw/upload/v1/auditinsight/org/signed/a.pdf";
     private final UUID orgId = UUID.randomUUID();
@@ -79,7 +82,8 @@ class SignedVersionServiceTest {
         byte[] pdf = bytes("signed-v1");
         when(signatureRepo.countByEvidenceId(evidenceId)).thenReturn(Mono.just(1L));
         when(versionRepo.findFirstByEvidenceIdOrderByVersionNoDesc(evidenceId)).thenReturn(Mono.empty());
-        when(signedDocumentService.renderSigned(evidence)).thenReturn(Mono.just(rendered(pdf, 1)));
+        when(signedDocumentService.baseDocument(evidence)).thenReturn(Mono.just(BASE));
+        when(signedDocumentService.stampOnto(evidence, BASE, 0)).thenReturn(Mono.just(rendered(pdf, 1)));
         when(cloudinaryService.upload(pdf, orgId + "/signed", "pdf")).thenReturn(Mono.just(STORED_URL));
 
         StepVerifier.create(service.serve(EMAIL, evidenceId))
@@ -115,7 +119,7 @@ class SignedVersionServiceTest {
                 })
                 .verifyComplete();
 
-        verify(signedDocumentService, never()).renderSigned(any());
+        verify(signedDocumentService, never()).stampOnto(any(), any(), anyInt());
         verify(cloudinaryService, never()).upload(any(), anyString(), anyString());
     }
 
@@ -135,18 +139,21 @@ class SignedVersionServiceTest {
     }
 
     @Test
-    void serve_newSignatureSinceLastVersion_storesNextVersion() {
+    void serve_newSignatureSinceLastVersion_stampsOnlyTheNewSignatureOntoTheStoredVersion() {
+        byte[] storedV1 = bytes("stored-v1");
         byte[] pdf = bytes("signed-v2");
         when(signatureRepo.countByEvidenceId(evidenceId)).thenReturn(Mono.just(2L));
         when(versionRepo.findFirstByEvidenceIdOrderByVersionNoDesc(evidenceId))
-                .thenReturn(Mono.just(version(1, 1, bytes("stored-v1"))));
-        when(signedDocumentService.renderSigned(evidence)).thenReturn(Mono.just(rendered(pdf, 2)));
+                .thenReturn(Mono.just(version(1, 1, storedV1)));
+        when(cloudinaryService.downloadOriginal(STORED_URL)).thenReturn(Mono.just(storedV1));
+        // Built on top of v1 (which already holds signature #1), so earlier stamps never move.
+        when(signedDocumentService.stampOnto(evidence, storedV1, 1)).thenReturn(Mono.just(rendered(pdf, 2)));
         when(cloudinaryService.upload(pdf, orgId + "/signed", "pdf")).thenReturn(Mono.just(STORED_URL));
 
         StepVerifier.create(service.serve(EMAIL, evidenceId))
                 .assertNext(served -> assertEquals(2, served.versionNo()))
                 .verifyComplete();
-        verify(cloudinaryService, never()).downloadOriginal(anyString());
+        verify(signedDocumentService, never()).baseDocument(any());
     }
 
     @Test
@@ -154,11 +161,14 @@ class SignedVersionServiceTest {
         byte[] ours = bytes("our-render");
         byte[] theirs = bytes("their-render");
         when(signatureRepo.countByEvidenceId(evidenceId)).thenReturn(Mono.just(1L));
-        // First lookup: nothing stored yet. Second lookup (just before saving): the other request won.
+        // Lookups 1-2 (is there a current version? what do we build on?): nothing stored yet.
+        // Lookup 3 (just before saving): the other request won.
         when(versionRepo.findFirstByEvidenceIdOrderByVersionNoDesc(evidenceId))
                 .thenReturn(Mono.empty())
+                .thenReturn(Mono.empty())
                 .thenReturn(Mono.just(version(1, 1, theirs)));
-        when(signedDocumentService.renderSigned(evidence)).thenReturn(Mono.just(rendered(ours, 1)));
+        when(signedDocumentService.baseDocument(evidence)).thenReturn(Mono.just(BASE));
+        when(signedDocumentService.stampOnto(evidence, BASE, 0)).thenReturn(Mono.just(rendered(ours, 1)));
         when(cloudinaryService.upload(ours, orgId + "/signed", "pdf")).thenReturn(Mono.just("https://res.cloudinary.com/x"));
         when(cloudinaryService.downloadOriginal(STORED_URL)).thenReturn(Mono.just(theirs));
 
@@ -197,7 +207,8 @@ class SignedVersionServiceTest {
         signature.setId(signatureId);
         when(signatureRepo.countByEvidenceId(evidenceId)).thenReturn(Mono.just(1L));
         when(versionRepo.findFirstByEvidenceIdOrderByVersionNoDesc(evidenceId)).thenReturn(Mono.empty());
-        when(signedDocumentService.renderSigned(evidence)).thenReturn(Mono.just(rendered(pdf, 1)));
+        when(signedDocumentService.baseDocument(evidence)).thenReturn(Mono.just(BASE));
+        when(signedDocumentService.stampOnto(evidence, BASE, 0)).thenReturn(Mono.just(rendered(pdf, 1)));
         when(cloudinaryService.upload(pdf, orgId + "/signed", "pdf")).thenReturn(Mono.just(STORED_URL));
         when(versionRepo.findById(any(UUID.class))).thenAnswer(inv -> Mono.just(version(1, 1, pdf)));
         when(signatureRepo.findById(signatureId)).thenReturn(Mono.just(signature));
@@ -214,7 +225,8 @@ class SignedVersionServiceTest {
     void createVersionAfterSigning_storageFails_doesNotThrowAndLeavesSignatureUnlinked() {
         when(signatureRepo.countByEvidenceId(evidenceId)).thenReturn(Mono.just(1L));
         when(versionRepo.findFirstByEvidenceIdOrderByVersionNoDesc(evidenceId)).thenReturn(Mono.empty());
-        when(signedDocumentService.renderSigned(evidence)).thenReturn(Mono.just(rendered(bytes("x"), 1)));
+        when(signedDocumentService.baseDocument(evidence)).thenReturn(Mono.just(BASE));
+        when(signedDocumentService.stampOnto(evidence, BASE, 0)).thenReturn(Mono.just(rendered(bytes("x"), 1)));
         when(cloudinaryService.upload(any(), anyString(), eq("pdf")))
                 .thenReturn(Mono.error(new RuntimeException("Cloudinary down")));
 
@@ -222,6 +234,61 @@ class SignedVersionServiceTest {
 
         verify(cloudinaryService, timeout(2000)).upload(any(), anyString(), eq("pdf"));
         verify(signatureRepo, never()).save(any());
+    }
+
+    @Test
+    void serve_wordDocument_rendersCertificateFromScratch() {
+        evidence.setFileType("docx");
+        byte[] certificate = bytes("certificate");
+        when(signatureRepo.countByEvidenceId(evidenceId)).thenReturn(Mono.just(1L));
+        when(versionRepo.findFirstByEvidenceIdOrderByVersionNoDesc(evidenceId)).thenReturn(Mono.empty());
+        when(signedDocumentService.renderSigned(evidence)).thenReturn(Mono.just(rendered(certificate, 1)));
+        when(cloudinaryService.upload(certificate, orgId + "/signed", "pdf")).thenReturn(Mono.just(STORED_URL));
+
+        StepVerifier.create(service.serve(EMAIL, evidenceId))
+                .assertNext(served -> assertEquals(1, served.versionNo()))
+                .verifyComplete();
+        verify(signedDocumentService, never()).baseDocument(any());
+    }
+
+    @Test
+    void signingBase_unsignedDocument_returnsVersionZeroWithItsHash() {
+        when(signatureRepo.countByEvidenceId(evidenceId)).thenReturn(Mono.just(0L));
+        when(signedDocumentService.baseDocument(evidence)).thenReturn(Mono.just(BASE));
+
+        StepVerifier.create(service.signingBase(EMAIL, evidenceId))
+                .assertNext(base -> {
+                    assertEquals(0, base.versionNo());
+                    assertEquals(SignedVersionService.sha256Hex(BASE), base.sha256());
+                    assertArrayEquals(BASE, base.bytes());
+                })
+                .verifyComplete();
+        verify(versionRepo, never()).save(any());
+    }
+
+    @Test
+    void signingBase_signedDocument_returnsCurrentStoredVersion() {
+        byte[] stored = bytes("stored-v1");
+        when(signatureRepo.countByEvidenceId(evidenceId)).thenReturn(Mono.just(1L));
+        when(versionRepo.findFirstByEvidenceIdOrderByVersionNoDesc(evidenceId))
+                .thenReturn(Mono.just(version(1, 1, stored)));
+        when(cloudinaryService.downloadOriginal(STORED_URL)).thenReturn(Mono.just(stored));
+
+        StepVerifier.create(service.signingBase(EMAIL, evidenceId))
+                .assertNext(base -> {
+                    assertEquals(1, base.versionNo());
+                    assertArrayEquals(stored, base.bytes());
+                })
+                .verifyComplete();
+    }
+
+    @Test
+    void signingBase_excelDocument_isRejected() {
+        evidence.setFileType("xlsx");
+
+        StepVerifier.create(service.signingBase(EMAIL, evidenceId))
+                .expectErrorMatches(e -> e instanceof InvalidRecord && e.getMessage().contains("Word and Excel"))
+                .verify();
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────

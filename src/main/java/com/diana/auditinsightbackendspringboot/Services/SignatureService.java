@@ -5,15 +5,18 @@ import com.diana.auditinsightbackendspringboot.DTOs.RequestSignatureRequest;
 import com.diana.auditinsightbackendspringboot.DTOs.SignEvidenceRequest;
 import com.diana.auditinsightbackendspringboot.DTOs.SignatureRequestResponse;
 import com.diana.auditinsightbackendspringboot.DTOs.SignatureResponse;
+import com.diana.auditinsightbackendspringboot.DTOs.SignaturePlacementRequest;
 import com.diana.auditinsightbackendspringboot.Enum.MemberStatus;
 import com.diana.auditinsightbackendspringboot.Enum.SignatureRequestStatus;
 import com.diana.auditinsightbackendspringboot.Exceptions.Custom.ForbiddenException;
 import com.diana.auditinsightbackendspringboot.Exceptions.Custom.InvalidRecord;
 import com.diana.auditinsightbackendspringboot.Models.Evidence;
 import com.diana.auditinsightbackendspringboot.Models.EvidenceSignature;
+import com.diana.auditinsightbackendspringboot.Models.EvidenceSignaturePlacement;
 import com.diana.auditinsightbackendspringboot.Models.SignatureRequest;
 import com.diana.auditinsightbackendspringboot.Models.User;
 import com.diana.auditinsightbackendspringboot.Repositories.EvidenceRepository;
+import com.diana.auditinsightbackendspringboot.Repositories.EvidenceSignaturePlacementRepository;
 import com.diana.auditinsightbackendspringboot.Repositories.EvidenceSignatureRepository;
 import com.diana.auditinsightbackendspringboot.Repositories.OrganisationMemberRepository;
 import com.diana.auditinsightbackendspringboot.Repositories.SignatureRequestRepository;
@@ -24,6 +27,8 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -48,6 +53,7 @@ public class SignatureService {
     private final OrgAccessService orgAccessService;
     private final EmailService emailService;
     private final SignedVersionService signedVersionService;
+    private final EvidenceSignaturePlacementRepository placementRepo;
 
     public SignatureService(EvidenceRepository evidenceRepo,
                             EvidenceSignatureRepository signatureRepo,
@@ -56,7 +62,8 @@ public class SignatureService {
                             UserRepository userRepo,
                             OrgAccessService orgAccessService,
                             EmailService emailService,
-                            SignedVersionService signedVersionService) {
+                            SignedVersionService signedVersionService,
+                            EvidenceSignaturePlacementRepository placementRepo) {
         this.evidenceRepo = evidenceRepo;
         this.signatureRepo = signatureRepo;
         this.requestRepo = requestRepo;
@@ -65,6 +72,7 @@ public class SignatureService {
         this.orgAccessService = orgAccessService;
         this.emailService = emailService;
         this.signedVersionService = signedVersionService;
+        this.placementRepo = placementRepo;
     }
 
     private static String blankToNull(String v) {
@@ -88,14 +96,25 @@ public class SignatureService {
         if (image != null && !image.startsWith(PNG_DATA_URL_PREFIX)) {
             return Mono.error(new InvalidRecord("signatureImage must be a PNG data URL"));
         }
+        List<SignaturePlacementRequest> placements = body.getPlacements() == null ? List.of() : body.getPlacements();
+        String placementError = validatePlacements(placements, typedName, image);
+        if (placementError != null) {
+            return Mono.error(new InvalidRecord(placementError));
+        }
+        String baseSha256 = placements.isEmpty() ? null : body.getBaseSha256();
 
         return findEvidence(evidenceId).flatMap(ev ->
                 orgAccessService.resolveGatedMember(ev.getOrganisationId(), email).flatMap(ctx -> {
                     User user = ctx.user();
+                    if (!placements.isEmpty() && !SignedDocumentService.isStampable(ev.getFileType())) {
+                        return Mono.<SignatureResponse>error(new InvalidRecord("Word and Excel files can't have a "
+                                + "signature placed on them; sign without choosing a position to get a signature certificate"));
+                    }
                     return signatureRepo.findByEvidenceIdAndSignerId(evidenceId, user.getId())
                             .flatMap(existing -> Mono.<SignatureResponse>error(
                                     new InvalidRecord("You have already signed this document")))
-                            .switchIfEmpty(Mono.defer(() -> persistSignature(ev, user, fullName, title, typedName, image)
+                            .switchIfEmpty(Mono.defer(() -> persistSignature(ev, user, fullName, title, typedName, image,
+                                            placements, baseSha256)
                                     // Store the new signed version in the background; Preview/Download create it
                                     // on demand if this hasn't finished, so signing never waits on Cloudinary.
                                     .doOnNext(saved -> signedVersionService.createVersionAfterSigning(
@@ -103,8 +122,28 @@ public class SignatureService {
                 }));
     }
 
+    /** Null when the placements are usable; otherwise the message to show. Field ranges are checked by @Valid. */
+    static String validatePlacements(List<SignaturePlacementRequest> placements, String typedName, String image) {
+        if (placements.isEmpty()) return null;
+        if (typedName == null && image == null) {
+            return "Draw or type your signature before placing it on the document";
+        }
+        for (SignaturePlacementRequest p : placements) {
+            if (p.getPageIndex() == null || p.getX() == null || p.getY() == null
+                    || p.getWidth() == null || p.getHeight() == null) {
+                return "Each signature position needs a page, x, y, width and height";
+            }
+            if (p.getX() < 0 || p.getY() < 0 || p.getWidth() <= 0 || p.getHeight() <= 0
+                    || p.getX() + p.getWidth() > 1.0001 || p.getY() + p.getHeight() > 1.0001) {
+                return "A signature position must lie within the page";
+            }
+        }
+        return null;
+    }
+
     private Mono<SignatureResponse> persistSignature(Evidence ev, User user, String fullName, String title,
-                                                     String typedName, String image) {
+                                                     String typedName, String image,
+                                                     List<SignaturePlacementRequest> placements, String baseSha256) {
         return requestRepo.findByEvidenceIdAndRequestedUserIdAndStatus(
                         ev.getId(), user.getId(), SignatureRequestStatus.PENDING)
                 .map(Optional::of)
@@ -121,7 +160,10 @@ public class SignatureService {
                     s.setSignatureImage(image);
                     s.setSignedAt(now);
                     s.setRequestId(pending.map(SignatureRequest::getId).orElse(null));
-                    return signatureRepo.save(s).flatMap(saved -> pending
+                    s.setBaseSha256(baseSha256);
+                    return signatureRepo.save(s)
+                            .flatMap(saved -> savePlacements(saved.getId(), placements, now).thenReturn(saved))
+                            .flatMap(saved -> pending
                             .map(req -> {
                                 req.setStatus(SignatureRequestStatus.SIGNED);
                                 req.setRespondedAt(now);
@@ -132,6 +174,26 @@ public class SignatureService {
                 .onErrorMap(DataIntegrityViolationException.class,
                         e -> new InvalidRecord("You have already signed this document"))
                 .map(this::toResponse);
+    }
+
+    private Mono<Void> savePlacements(UUID signatureId, List<SignaturePlacementRequest> placements, LocalDateTime now) {
+        if (placements.isEmpty()) return Mono.empty();
+        return placementRepo.saveAll(placements.stream().map(p -> {
+            EvidenceSignaturePlacement e = new EvidenceSignaturePlacement();
+            e.setSignatureId(signatureId);
+            e.setPageIndex(p.getPageIndex());
+            e.setX(fraction(p.getX()));
+            e.setY(fraction(p.getY()));
+            // Clamp tiny floating-point overshoots so the box never pokes past the page edge.
+            e.setWidth(fraction(Math.min(p.getWidth(), 1.0 - p.getX())));
+            e.setHeight(fraction(Math.min(p.getHeight(), 1.0 - p.getY())));
+            e.setCreatedAt(now);
+            return e;
+        }).toList()).then();
+    }
+
+    private static BigDecimal fraction(double value) {
+        return BigDecimal.valueOf(Math.max(0.0, Math.min(1.0, value))).setScale(6, RoundingMode.HALF_UP);
     }
 
     // ── Request signatures from other members ─────────────────────────────────────

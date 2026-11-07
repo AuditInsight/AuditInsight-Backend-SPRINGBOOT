@@ -3,6 +3,8 @@ package com.diana.auditinsightbackendspringboot.Services;
 import com.diana.auditinsightbackendspringboot.Exceptions.Custom.InvalidRecord;
 import com.diana.auditinsightbackendspringboot.Models.Evidence;
 import com.diana.auditinsightbackendspringboot.Models.EvidenceSignature;
+import com.diana.auditinsightbackendspringboot.Models.EvidenceSignaturePlacement;
+import com.diana.auditinsightbackendspringboot.Repositories.EvidenceSignaturePlacementRepository;
 import com.diana.auditinsightbackendspringboot.Repositories.EvidenceSignatureRepository;
 import com.diana.auditinsightbackendspringboot.Repositories.UserRepository;
 import lombok.extern.slf4j.Slf4j;
@@ -27,17 +29,19 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.UUID;
 
 /**
- * Builds the "download with signatures" version of an evidence document: the original file followed by a
- * signature page listing every signer (drawn or typed signature, name, email and time).
+ * Builds signed renditions of an evidence document.
  * <ul>
- *   <li>PDF — signature page(s) are appended to the original document.</li>
- *   <li>PNG / JPG — wrapped into a PDF page, followed by the signature page(s).</li>
- *   <li>XLS / XLSX — these formats cannot carry a stamp, so a separate signature-certificate PDF is returned.</li>
+ *   <li>PDF / PNG / JPG — signatures are stamped onto the document: where the signer placed them, or (when no
+ *       position was chosen) in a "Signatures" block below the last page's content or on a new page. Images are
+ *       first put on their own A4 page. New signatures are added onto the previous signed version
+ *       ({@link #stampOnto}), so earlier stamps never move.</li>
+ *   <li>DOCX / XLS / XLSX — these formats cannot carry a stamp, so a separate signature-certificate PDF is returned.</li>
  * </ul>
  * This is a visual record of who signed and when; it is not a cryptographic PDF signature.
  */
@@ -58,47 +62,122 @@ public class SignedDocumentService {
     private static final float INLINE_HEADER_HEIGHT = 34f;
 
     private final EvidenceSignatureRepository signatureRepo;
+    private final EvidenceSignaturePlacementRepository placementRepo;
     private final UserRepository userRepo;
     private final CloudinaryService cloudinaryService;
 
     public SignedDocumentService(EvidenceSignatureRepository signatureRepo,
+                                 EvidenceSignaturePlacementRepository placementRepo,
                                  UserRepository userRepo,
                                  CloudinaryService cloudinaryService) {
         this.signatureRepo = signatureRepo;
+        this.placementRepo = placementRepo;
         this.userRepo = userRepo;
         this.cloudinaryService = cloudinaryService;
     }
 
-    /** One signer as printed on the signature page. */
-    private record Signer(String name, String title, String email, String typedName, byte[] image, String signedAt) {}
+    /** One signer as printed on the document; {@code placements} is empty when they didn't choose a position. */
+    private record Signer(String name, String title, String email, String typedName, byte[] image, String signedAt,
+                          List<EvidenceSignaturePlacement> placements) {}
+
+    /** PDFs and PNG/JPG images can carry signatures on the document itself; Word and Excel files cannot. */
+    public static boolean isStampable(String fileType) {
+        String type = fileType == null ? "" : fileType.toLowerCase();
+        return type.equals("pdf") || type.equals("png") || type.equals("jpg") || type.equals("jpeg");
+    }
 
     /**
-     * Renders the document with every signature it currently has. Access checks and storage are the caller's job
-     * (see SignedVersionService), which stores the result so Preview and Download serve identical bytes.
+     * Version 0 of a stampable document as a PDF — the page geometry signers place signatures on. A PDF is the
+     * original file unchanged; an image is put on its own A4 page (always the same layout, so placements stay put).
+     */
+    public Mono<byte[]> baseDocument(Evidence ev) {
+        if (!isStampable(ev.getFileType())) {
+            return Mono.error(new InvalidRecord(
+                    "Word and Excel files can't have a signature placed on them; sign them to get a signature certificate"));
+        }
+        boolean pdf = "pdf".equalsIgnoreCase(ev.getFileType());
+        return download(ev.getFileUpload())
+                .flatMap(bytes -> pdf ? Mono.just(bytes) : Mono.fromCallable(() -> {
+                    try (PDDocument doc = new PDDocument()) {
+                        addFullImagePage(doc, bytes, ev.getDocumentName());
+                        ByteArrayOutputStream out = new ByteArrayOutputStream();
+                        doc.save(out);
+                        return out.toByteArray();
+                    }
+                }).subscribeOn(Schedulers.boundedElastic()));
+    }
+
+    /**
+     * Adds every signature after the first {@code alreadyIncluded} (in signing order) onto {@code basePdf}, which
+     * must already contain those first signatures. Placed signatures are stamped where the signer put them; the
+     * rest go into a "Signatures" block below the last page's content or on a new page.
+     */
+    public Mono<SignedDocument> stampOnto(Evidence ev, byte[] basePdf, int alreadyIncluded) {
+        return loadSigners(ev.getId()).flatMap(signers -> {
+            if (signers.isEmpty()) {
+                return Mono.<SignedDocument>error(new InvalidRecord(
+                        "This document has not been signed yet, so there is nothing to add to it"));
+            }
+            List<Signer> pending = signers.subList(Math.min(alreadyIncluded, signers.size()), signers.size());
+            return Mono.fromCallable(() -> {
+                try (PDDocument doc = Loader.loadPDF(basePdf)) {
+                    List<Signer> unplaced = new ArrayList<>();
+                    for (Signer s : pending) {
+                        boolean placedAny = false;
+                        for (EvidenceSignaturePlacement p : s.placements()) {
+                            if (p.getPageIndex() != null && p.getPageIndex() < doc.getNumberOfPages()) {
+                                drawPlaced(doc, s, p);
+                                placedAny = true;
+                            }
+                        }
+                        if (!placedAny) unplaced.add(s); // no (valid) position chosen: use the signature block
+                    }
+                    if (!unplaced.isEmpty() && doc.getNumberOfPages() > 0) {
+                        addSignaturePages(doc, ev.getDocumentName(), unplaced,
+                                doc.getPage(doc.getNumberOfPages() - 1), lastPageContentBottom(doc));
+                    } else if (!unplaced.isEmpty()) {
+                        addSignaturePages(doc, ev.getDocumentName(), unplaced, null, null);
+                    }
+                    ByteArrayOutputStream out = new ByteArrayOutputStream();
+                    doc.save(out);
+                    return new SignedDocument(out.toByteArray(), stripExtension(ev.getDocumentName()) + "-signed.pdf",
+                            "application/pdf", signers.size());
+                }
+            }).subscribeOn(Schedulers.boundedElastic());
+        });
+    }
+
+    /**
+     * Renders the document with every signature it currently has, from scratch: the original plus all signatures
+     * for PDFs/images, or a signature certificate for Word/Excel files. Access checks and storage are the
+     * caller's job (see SignedVersionService), which stores the result so Preview and Download serve identical bytes.
      */
     public Mono<SignedDocument> renderSigned(Evidence ev) {
+        if (isStampable(ev.getFileType())) {
+            return baseDocument(ev).flatMap(base -> stampOnto(ev, base, 0));
+        }
         return loadSigners(ev.getId())
                 .flatMap(signers -> {
                     if (signers.isEmpty()) {
                         return Mono.<SignedDocument>error(new InvalidRecord(
                                 "This document has not been signed yet, so there is nothing to add to it"));
                     }
-                    return render(ev, signers);
+                    return renderCertificate(ev, signers);
                 });
     }
 
     private Mono<List<Signer>> loadSigners(UUID evidenceId) {
         return signatureRepo.findAllByEvidenceIdOrderBySignedAtAsc(evidenceId)
-                .concatMap(s -> userRepo.findById(s.getSignerId())
-                        .map(u -> u.getUsername())
-                        .defaultIfEmpty("")
-                        .map(email -> toSigner(s, email)))
+                .concatMap(s -> Mono.zip(
+                        userRepo.findById(s.getSignerId()).map(u -> u.getUsername()).defaultIfEmpty(""),
+                        placementRepo.findAllBySignatureId(s.getId()).collectList())
+                        .map(t -> toSigner(s, t.getT1(), t.getT2())))
                 .collectList();
     }
 
-    private Signer toSigner(EvidenceSignature s, String email) {
+    private Signer toSigner(EvidenceSignature s, String email, List<EvidenceSignaturePlacement> placements) {
         return new Signer(s.getSignerName(), s.getSignerTitle(), email, s.getTypedName(), decodeImage(s.getSignatureImage()),
-                s.getSignedAt() == null ? "" : TIME_FORMAT.format(toUtc(s.getSignedAt())));
+                s.getSignedAt() == null ? "" : TIME_FORMAT.format(toUtc(s.getSignedAt())), placements);
     }
 
     /**
@@ -118,32 +197,17 @@ public class SignedDocumentService {
         }
     }
 
-    private Mono<SignedDocument> render(Evidence ev, List<Signer> signers) {
-        String type = ev.getFileType() == null ? "" : ev.getFileType().toLowerCase();
-        String baseName = stripExtension(ev.getDocumentName());
-
-        boolean stampable = type.equals("pdf") || type.equals("png") || type.equals("jpg") || type.equals("jpeg");
-        Mono<byte[]> original = stampable ? download(ev.getFileUpload()) : Mono.just(new byte[0]);
-
-        return original.flatMap(bytes -> Mono.fromCallable(() -> {
-            try (PDDocument doc = type.equals("pdf") && bytes.length > 0 ? Loader.loadPDF(bytes) : new PDDocument()) {
-                PDPage lastPage = null;
-                Float contentBottom = null;
-                if (type.equals("png") || type.equals("jpg") || type.equals("jpeg")) {
-                    Placed placed = addImagePage(doc, bytes, ev.getDocumentName(), signers.size());
-                    lastPage = placed.page();
-                    contentBottom = placed.contentBottomY();
-                } else if (type.equals("pdf") && doc.getNumberOfPages() > 0) {
-                    lastPage = doc.getPage(doc.getNumberOfPages() - 1);
-                    contentBottom = lastPageContentBottom(doc);
-                }
-                addSignaturePages(doc, ev.getDocumentName(), signers, lastPage, contentBottom);
+    /** Word/Excel: a standalone certificate PDF listing every signer, since the file itself can't be stamped. */
+    private Mono<SignedDocument> renderCertificate(Evidence ev, List<Signer> signers) {
+        return Mono.fromCallable(() -> {
+            try (PDDocument doc = new PDDocument()) {
+                addSignaturePages(doc, ev.getDocumentName(), signers, null, null);
                 ByteArrayOutputStream out = new ByteArrayOutputStream();
                 doc.save(out);
-                String name = stampable ? baseName + "-signed.pdf" : baseName + "-signatures.pdf";
-                return new SignedDocument(out.toByteArray(), name, "application/pdf", signers.size());
+                return new SignedDocument(out.toByteArray(), stripExtension(ev.getDocumentName()) + "-signatures.pdf",
+                        "application/pdf", signers.size());
             }
-        }).subscribeOn(Schedulers.boundedElastic()));
+        }).subscribeOn(Schedulers.boundedElastic());
     }
 
     private Mono<byte[]> download(String url) {
@@ -157,19 +221,16 @@ public class SignedDocumentService {
 
     // ── PDF drawing ───────────────────────────────────────────────────────────────
 
-    /** Places the image on its own A4 page; returns the page and the y of the image's bottom edge. */
-    private record Placed(PDPage page, float contentBottomY) {}
-
-    private Placed addImagePage(PDDocument doc, byte[] imageBytes, String documentName, int signerCount) throws IOException {
+    /**
+     * Puts the image on its own A4 page, as large as the margins allow (never enlarged), top-aligned. The layout
+     * never depends on how many people signed, so a signature placed over the image stays where it was put.
+     */
+    private void addFullImagePage(PDDocument doc, byte[] imageBytes, String documentName) throws IOException {
         PDImageXObject image = PDImageXObject.createFromByteArray(doc, imageBytes, documentName);
         PDPage page = new PDPage(PDRectangle.A4);
         doc.addPage(page);
         float maxW = page.getMediaBox().getWidth() - 2 * MARGIN;
-        // Leave room under the image for the signatures (heading + every signer row), but never shrink it below 40% of the page.
-        int rows = (signerCount + columnsFor(page.getMediaBox().getWidth()) - 1) / columnsFor(page.getMediaBox().getWidth());
-        float reserved = GAP_BELOW_CONTENT + INLINE_HEADER_HEIGHT + rows * BLOCK_HEIGHT + BOTTOM_MARGIN;
-        float fullHeight = page.getMediaBox().getHeight() - 2 * MARGIN;
-        float maxH = Math.max(fullHeight * 0.4f, page.getMediaBox().getHeight() - MARGIN - reserved);
+        float maxH = page.getMediaBox().getHeight() - 2 * MARGIN;
         float scale = Math.min(1f, Math.min(maxW / image.getWidth(), maxH / image.getHeight()));
         float w = image.getWidth() * scale;
         float h = image.getHeight() * scale;
@@ -177,7 +238,63 @@ public class SignedDocumentService {
         try (PDPageContentStream cs = new PDPageContentStream(doc, page)) {
             cs.drawImage(image, (page.getMediaBox().getWidth() - w) / 2, bottom, w, h);
         }
-        return new Placed(page, bottom);
+    }
+
+    /**
+     * Stamps one placed signature: the drawn image (or typed name) fitted inside the chosen box, upright as the
+     * viewer sees the page, with a small "name · time" caption just below it (or above, at the page's bottom edge).
+     */
+    private void drawPlaced(PDDocument doc, Signer s, EvidenceSignaturePlacement p) throws IOException {
+        PDPage page = doc.getPage(p.getPageIndex());
+        PDRectangle box = page.getCropBox();
+        int rotation = PlacementGeometry.normalize(page.getRotation());
+        float pageW = PlacementGeometry.displayWidth(box, rotation);
+        float pageH = PlacementGeometry.displayHeight(box, rotation);
+        float dx = p.getX().floatValue() * pageW;
+        float dy = p.getY().floatValue() * pageH;
+        float dw = Math.min(p.getWidth().floatValue(), 1f - p.getX().floatValue()) * pageW;
+        float dh = Math.min(p.getHeight().floatValue(), 1f - p.getY().floatValue()) * pageH;
+
+        PDType1Font script = new PDType1Font(Standard14Fonts.FontName.TIMES_ITALIC);
+        PDType1Font regular = new PDType1Font(Standard14Fonts.FontName.HELVETICA);
+
+        try (PDPageContentStream cs = new PDPageContentStream(doc, page, PDPageContentStream.AppendMode.APPEND, true, true)) {
+            boolean drewImage = false;
+            if (s.image() != null) {
+                try {
+                    PDImageXObject img = PDImageXObject.createFromByteArray(doc, s.image(), "signature");
+                    float scale = Math.min(dw / img.getWidth(), dh / img.getHeight());
+                    float w = img.getWidth() * scale, h = img.getHeight() * scale;
+                    cs.drawImage(img, PlacementGeometry.boxMatrix(box, rotation,
+                            dx + (dw - w) / 2, dy + (dh - h) / 2, w, h));
+                    drewImage = true;
+                } catch (IOException e) {
+                    log.warn("Unreadable signature image for {}, stamping the typed name instead", s.email());
+                }
+            }
+            if (!drewImage) {
+                String text = sanitize(firstNonBlank(s.typedName(), s.name()));
+                float widthAt1 = Math.max(script.getStringWidth(text) / 1000f, 0.01f);
+                float size = Math.max(4f, Math.min(dh * 0.7f, dw * 0.95f / widthAt1));
+                float textW = widthAt1 * size;
+                cs.beginText();
+                cs.setFont(script, size);
+                cs.setTextMatrix(PlacementGeometry.textMatrix(box, rotation,
+                        dx + (dw - textW) / 2, dy + dh / 2 + size * 0.3f));
+                cs.showText(text);
+                cs.endText();
+            }
+
+            String caption = sanitize(s.name() + (s.signedAt().isBlank() ? "" : " · " + s.signedAt()));
+            float captionSize = 6.5f;
+            float captionY = dy + dh + 8f <= pageH - 2f ? dy + dh + 8f : Math.max(dy - 2f, captionSize + 1f);
+            cs.setNonStrokingColor(Color.DARK_GRAY);
+            cs.beginText();
+            cs.setFont(regular, captionSize);
+            cs.setTextMatrix(PlacementGeometry.textMatrix(box, rotation, dx, captionY));
+            cs.showText(caption);
+            cs.endText();
+        }
     }
 
     /**

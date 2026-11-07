@@ -110,6 +110,43 @@ public class SignedVersionService {
                         .flatMap(served -> versionRepo.findById(served.versionId()))));
     }
 
+    /**
+     * The next rendition. PDFs and images build on the latest stored version (or version 0 when there is none) and
+     * stamp only the signatures it doesn't contain yet — a version with signature_count k holds the first k
+     * signatures in signing order — so earlier stamps never move. Word/Excel certificates are re-rendered whole.
+     */
+    private Mono<SignedDocumentService.SignedDocument> renderNext(Evidence ev) {
+        if (!SignedDocumentService.isStampable(ev.getFileType())) {
+            return signedDocumentService.renderSigned(ev);
+        }
+        return versionRepo.findFirstByEvidenceIdOrderByVersionNoDesc(ev.getId())
+                .flatMap(latest -> load(latest).map(served -> new Base(served.bytes(), latest.getSignatureCount())))
+                .switchIfEmpty(Mono.defer(() -> signedDocumentService.baseDocument(ev).map(bytes -> new Base(bytes, 0))))
+                .flatMap(base -> signedDocumentService.stampOnto(ev, base.bytes(), base.signaturesIncluded()));
+    }
+
+    private record Base(byte[] bytes, int signaturesIncluded) {}
+
+    /**
+     * The exact document a signer should place their signature on: the current signed version, or version 0 (the
+     * original PDF, or the image on its A4 page) when nobody has signed yet. Its SHA-256 is sent back with the
+     * signature as a record of what the signer saw.
+     */
+    public Mono<ServedVersion> signingBase(String requesterEmail, UUID evidenceId) {
+        return evidenceRepo.findById(evidenceId)
+                .switchIfEmpty(Mono.error(new InvalidRecord("Evidence not found")))
+                .flatMap(ev -> orgAccessService.resolveGatedMember(ev.getOrganisationId(), requesterEmail)
+                        .filter(ctx -> SignedDocumentService.isStampable(ev.getFileType()))
+                        .switchIfEmpty(Mono.error(new InvalidRecord("Word and Excel files can't have a signature "
+                                + "placed on them; sign them to get a signature certificate")))
+                        .flatMap(ctx -> signatureRepo.countByEvidenceId(ev.getId())
+                                .defaultIfEmpty(0L)
+                                .flatMap(count -> count > 0
+                                        ? currentVersion(ev, ctx.user().getId())
+                                        : signedDocumentService.baseDocument(ev).map(bytes -> new ServedVersion(
+                                                null, 0, sha256Hex(bytes), ev.getDocumentName(), bytes)))));
+    }
+
     /** Fetches a stored version's bytes and checks they still match the recorded SHA-256. */
     private Mono<ServedVersion> load(EvidenceDocumentVersion v) {
         return cloudinaryService.downloadOriginal(v.getFileUrl())
@@ -128,7 +165,7 @@ public class SignedVersionService {
 
     /** Renders the document with all current signatures, uploads it and records it as the next version. */
     private Mono<ServedVersion> createVersion(Evidence ev, Long actorId) {
-        return signedDocumentService.renderSigned(ev)
+        return renderNext(ev)
                 .flatMap(doc -> cloudinaryService.upload(doc.bytes(), ev.getOrganisationId() + "/" + SIGNED_FOLDER, "pdf")
                         .flatMap(url -> saveNextVersion(ev, actorId, doc, url)
                                 // Two requests computed the same version number: adopt whatever won.

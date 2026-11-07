@@ -100,6 +100,24 @@ public class SignatureController {
                         .body(doc.bytes()));
     }
 
+    @GetMapping("/evidence/{evidenceId}/signing-base")
+    @Operation(summary = "Get the document to place a signature on",
+            description = "Returns the exact PDF a signer should position their signature on: the current signed " +
+                    "version, or the original (images are put on an A4 page) when nobody has signed yet. Signature " +
+                    "positions are fractions of these pages as displayed. Send the X-Document-SHA256 header value " +
+                    "back as baseSha256 when signing. PDF and image documents only.")
+    public Mono<ResponseEntity<byte[]>> signingBase(
+            Authentication auth,
+            @PathVariable UUID evidenceId) {
+        return signedVersionService.signingBase(auth.getName(), evidenceId)
+                .map(doc -> ResponseEntity.ok()
+                        .contentType(MediaType.APPLICATION_PDF)
+                        .header(HEADER_VERSION, String.valueOf(doc.versionNo()))
+                        .header(HEADER_SHA256, doc.sha256())
+                        .header(HttpHeaders.ACCESS_CONTROL_EXPOSE_HEADERS, String.join(", ", HEADER_VERSION, HEADER_SHA256))
+                        .body(doc.bytes()));
+    }
+
     @GetMapping("/signature-requests/pending")
     @Operation(summary = "My pending signature requests",
             description = "Signature requests addressed to the logged-in user that are still waiting.")
