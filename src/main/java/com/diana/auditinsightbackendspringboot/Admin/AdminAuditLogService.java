@@ -39,6 +39,7 @@ public class AdminAuditLogService {
                 .defaultIfEmpty("Unknown admin")
                 .map(username -> new AdminAuditLogResponse(entry.getId(), username, entry.getAction(),
                         entry.getTargetType(), entry.getTargetId(), entry.getBeforeState(), entry.getAfterState(),
+                        entry.getReason(),
                         entry.getCreatedAt()));
     }
 }
