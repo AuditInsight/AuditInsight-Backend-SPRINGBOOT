@@ -1,5 +1,6 @@
 package com.diana.auditinsightbackendspringboot.Models;
 
+import com.diana.auditinsightbackendspringboot.Enum.SubscriptionSource;
 import com.diana.auditinsightbackendspringboot.Enum.SubscriptionStatus;
 import com.diana.auditinsightbackendspringboot.Enum.SubscriptionType;
 import lombok.Getter;
@@ -50,4 +51,12 @@ public class Subscription {
 
     @Column("updated_at")
     private LocalDateTime updatedAt;
+
+    // Where this paid period came from (verified payment, Super Admin complimentary grant, or legacy).
+    @Column("source")
+    private SubscriptionSource source = SubscriptionSource.LEGACY;
+
+    // Super Admin's reason, for complimentary periods.
+    @Column("admin_reason")
+    private String adminReason;
 }

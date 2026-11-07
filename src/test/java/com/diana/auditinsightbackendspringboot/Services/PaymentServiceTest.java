@@ -13,11 +13,13 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
 import java.math.BigDecimal;
 import java.util.Map;
+import java.time.LocalDateTime;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -35,6 +37,7 @@ class PaymentServiceTest {
     @Mock private FlutterwaveService flutterwaveService;
     @Mock private SubscriptionActivationService activationService;
     @Mock private PlanPriceService planPriceService;
+    @Mock private OrganisationLock organisationLock;
 
     private PaymentService paymentService;
 
@@ -42,9 +45,13 @@ class PaymentServiceTest {
     private final String email = "client@test.com";
 
     @BeforeEach
+    @SuppressWarnings("unchecked")
     void setUp() {
         paymentService = new PaymentService(paymentRepository, subscriptionRepository, userRepository,
-                memberRepository, pawaPayService, flutterwaveService, activationService, planPriceService);
+                memberRepository, pawaPayService, flutterwaveService, activationService, planPriceService, organisationLock);
+        lenient().when(organisationLock.inTransaction(any(), any()))
+                .thenAnswer(inv -> ((java.util.function.Supplier<Mono<?>>) inv.getArgument(1)).get());
+        lenient().when(paymentRepository.findAllByOrganisationIdAndStatus(any(), any())).thenReturn(Flux.empty());
     }
 
     private PlanPrice monthlyPlanPrice() {
@@ -98,7 +105,52 @@ class PaymentServiceTest {
     }
 
     @Test
-    void startMomoCheckout_momoRequestFails_marksPaymentFailedAndPropagatesError() {
+    void startMomoCheckout_pawaPayRejects_marksPaymentFailedAndReportsIt() {
+        stubCheckoutBasics();
+        when(pawaPayService.requestDeposit(any(), any(), anyString()))
+                .thenReturn(Mono.error(new PawaPayService.DepositRejectedException("pawaPay deposit was rejected: REJECTED", null)));
+        when(paymentRepository.resolveIfPending(any(), eq(PaymentStatus.FAILED), isNull(), anyString()))
+                .thenReturn(Mono.just(1));
+
+        StepVerifier.create(paymentService.startMomoCheckout(orgId, email, SubscriptionType.MONTHLY, "0788123456"))
+                .expectErrorMatches(e -> e instanceof InvalidRecord && e.getMessage().contains("Mobile Money"))
+                .verify();
+
+        verify(paymentRepository, times(1)).save(any()); // initial PENDING save only — FAILED goes through resolveIfPending
+        verify(paymentRepository, times(1)).resolveIfPending(any(), eq(PaymentStatus.FAILED), isNull(), anyString());
+        verify(activationService, never()).activateFromPayment(any());
+    }
+
+    @Test
+    void startMomoCheckout_unknownOutcome_keepsPaymentPendingInsteadOfFailingIt() {
+        stubCheckoutBasics();
+        when(pawaPayService.requestDeposit(any(), any(), anyString()))
+                .thenReturn(Mono.error(new RuntimeException("Read timed out")));
+
+        StepVerifier.create(paymentService.startMomoCheckout(orgId, email, SubscriptionType.MONTHLY, "0788123456"))
+                .expectNextMatches(p -> p.getStatus() == PaymentStatus.PENDING)
+                .verifyComplete();
+
+        verify(paymentRepository, never()).resolveIfPending(any(), any(), any(), any());
+    }
+
+    @Test
+    void startMomoCheckout_anotherPaymentAwaitingApproval_isRejectedWithoutCharging() {
+        when(userRepository.findByUsername(email)).thenReturn(Mono.just(user()));
+        when(memberRepository.findByOrganisationIdAndUserId(orgId, 1L)).thenReturn(Mono.just(activeMember()));
+        Payment waiting = pendingMomoPayment();
+        waiting.setCreatedAt(LocalDateTime.now().minusMinutes(2));
+        when(paymentRepository.findAllByOrganisationIdAndStatus(orgId, PaymentStatus.PENDING)).thenReturn(Flux.just(waiting));
+
+        StepVerifier.create(paymentService.startMomoCheckout(orgId, email, SubscriptionType.MONTHLY, "0788123456"))
+                .expectErrorMatches(e -> e instanceof InvalidRecord && e.getMessage().contains("already waiting"))
+                .verify();
+
+        verify(pawaPayService, never()).requestDeposit(any(), any(), any());
+        verify(paymentRepository, never()).save(any());
+    }
+
+    private void stubCheckoutBasics() {
         when(userRepository.findByUsername(email)).thenReturn(Mono.just(user()));
         when(memberRepository.findByOrganisationIdAndUserId(orgId, 1L)).thenReturn(Mono.just(activeMember()));
         when(planPriceService.getPrice(SubscriptionType.MONTHLY)).thenReturn(Mono.just(monthlyPlanPrice()));
@@ -107,18 +159,6 @@ class PaymentServiceTest {
             if (p.getId() == null) p.setId(UUID.randomUUID());
             return Mono.just(p);
         });
-        when(pawaPayService.requestDeposit(any(), any(), anyString()))
-                .thenReturn(Mono.error(new RuntimeException("MTN sandbox unreachable")));
-        when(paymentRepository.resolveIfPending(any(), eq(PaymentStatus.FAILED), isNull(), anyString()))
-                .thenReturn(Mono.just(1));
-
-        StepVerifier.create(paymentService.startMomoCheckout(orgId, email, SubscriptionType.MONTHLY, "0788123456"))
-                .expectErrorMatches(e -> e instanceof RuntimeException && e.getMessage().contains("unreachable"))
-                .verify();
-
-        verify(paymentRepository, times(1)).save(any()); // initial PENDING save only — FAILED goes through resolveIfPending
-        verify(paymentRepository, times(1)).resolveIfPending(any(), eq(PaymentStatus.FAILED), isNull(), anyString());
-        verify(activationService, never()).activateFromPayment(any());
     }
 
     @Test
@@ -599,9 +639,11 @@ class PaymentServiceTest {
     }
 
     @Test
-    void expireStalePayment_marksExpired() {
+    void expireStalePayment_stillUnresolvedAtPawaPay_marksExpired() {
         Payment payment = pendingMomoPayment();
 
+        when(pawaPayService.getStatus(payment.getId())).thenReturn(Mono.just(
+                new PawaPayService.StatusResult(PawaPayService.PawaPayStatus.PENDING, null, null)));
         when(paymentRepository.resolveIfPending(eq(payment.getId()), eq(PaymentStatus.EXPIRED), isNull(), anyString()))
                 .thenReturn(Mono.just(1));
 
@@ -612,18 +654,106 @@ class PaymentServiceTest {
         verify(activationService, never()).activateFromPayment(any());
     }
 
+    @Test
+    void expireStalePayment_completedAtPawaPay_isActivatedNotExpired() {
+        Payment payment = pendingMomoPayment();
+        when(pawaPayService.getStatus(payment.getId())).thenReturn(Mono.just(new PawaPayService.StatusResult(
+                PawaPayService.PawaPayStatus.SUCCESSFUL, null, new BigDecimal("15000"), "MTN-123")));
+        when(paymentRepository.resolveIfPending(payment.getId(), PaymentStatus.SUCCESSFUL, new BigDecimal("15000"), null))
+                .thenReturn(Mono.just(1));
+        Subscription sub = new Subscription();
+        sub.setId(UUID.randomUUID());
+        when(activationService.activateFromPayment(any())).thenReturn(Mono.just(sub));
+        when(paymentRepository.setProviderReferenceIfAbsent(payment.getId(), "MTN-123")).thenReturn(Mono.just(1));
+
+        StepVerifier.create(paymentService.expireStalePayment(payment))
+                .expectNextMatches(p -> p.getStatus() == PaymentStatus.SUCCESSFUL
+                        && "MTN-123".equals(p.getProviderTransactionId()))
+                .verifyComplete();
+        verify(paymentRepository, never()).resolveIfPending(any(), eq(PaymentStatus.EXPIRED), any(), any());
+    }
+
+    @Test
+    void reconcile_pawaPayNeverReceivedRequest_marksFailedAfterGracePeriod() {
+        Payment payment = pendingMomoPayment();
+        payment.setCreatedAt(LocalDateTime.now().minusMinutes(20));
+        when(pawaPayService.getStatus(payment.getId())).thenReturn(Mono.just(
+                new PawaPayService.StatusResult(PawaPayService.PawaPayStatus.NOT_FOUND, "none", null)));
+        when(paymentRepository.resolveIfPending(eq(payment.getId()), eq(PaymentStatus.FAILED), isNull(), anyString()))
+                .thenReturn(Mono.just(1));
+
+        StepVerifier.create(paymentService.reconcilePendingPayment(payment))
+                .expectNextMatches(p -> p.getStatus() == PaymentStatus.FAILED)
+                .verifyComplete();
+    }
+
+    @Test
+    void reconcile_pawaPayNotFoundYet_staysPendingDuringGracePeriod() {
+        Payment payment = pendingMomoPayment();
+        payment.setCreatedAt(LocalDateTime.now().minusMinutes(1));
+        when(pawaPayService.getStatus(payment.getId())).thenReturn(Mono.just(
+                new PawaPayService.StatusResult(PawaPayService.PawaPayStatus.NOT_FOUND, "none", null)));
+
+        StepVerifier.create(paymentService.reconcilePendingPayment(payment))
+                .expectNextMatches(p -> p.getStatus() == PaymentStatus.PENDING)
+                .verifyComplete();
+        verify(paymentRepository, never()).resolveIfPending(any(), any(), any(), any());
+    }
+
+    @Test
+    void callback_forExpiredPaymentThatCompletedLate_recoversIt() {
+        Payment payment = pendingMomoPayment();
+        payment.setStatus(PaymentStatus.EXPIRED);
+        when(paymentRepository.findById(payment.getId())).thenReturn(Mono.just(payment));
+        when(pawaPayService.getStatus(payment.getId())).thenReturn(Mono.just(
+                new PawaPayService.StatusResult(PawaPayService.PawaPayStatus.SUCCESSFUL, null, new BigDecimal("15000"))));
+        when(paymentRepository.resolveIfStatus(payment.getId(), PaymentStatus.EXPIRED, PaymentStatus.SUCCESSFUL,
+                new BigDecimal("15000"), null)).thenReturn(Mono.just(1));
+        Subscription sub = new Subscription();
+        sub.setId(UUID.randomUUID());
+        when(activationService.activateFromPayment(any())).thenReturn(Mono.just(sub));
+
+        StepVerifier.create(paymentService.handlePawaPayCallback(payment.getId())).verifyComplete();
+        verify(activationService).activateFromPayment(any());
+    }
+
+    @Test
+    void callback_forExpiredPaymentStillNotCompleted_changesNothing() {
+        Payment payment = pendingMomoPayment();
+        payment.setStatus(PaymentStatus.EXPIRED);
+        when(paymentRepository.findById(payment.getId())).thenReturn(Mono.just(payment));
+        when(pawaPayService.getStatus(payment.getId())).thenReturn(Mono.just(
+                new PawaPayService.StatusResult(PawaPayService.PawaPayStatus.FAILED, "x", null)));
+
+        StepVerifier.create(paymentService.handlePawaPayCallback(payment.getId())).verifyComplete();
+        verify(paymentRepository, never()).resolveIfStatus(any(), any(), any(), any(), any());
+        verify(activationService, never()).activateFromPayment(any());
+    }
+
+    @Test
+    void activationFailure_isNotSwallowed_soTheStatusChangeRollsBack() {
+        Payment payment = pendingMomoPayment();
+        when(pawaPayService.getStatus(payment.getId())).thenReturn(Mono.just(
+                new PawaPayService.StatusResult(PawaPayService.PawaPayStatus.SUCCESSFUL, null, new BigDecimal("15000"))));
+        when(paymentRepository.resolveIfPending(payment.getId(), PaymentStatus.SUCCESSFUL, new BigDecimal("15000"), null))
+                .thenReturn(Mono.just(1));
+        when(activationService.activateFromPayment(any())).thenReturn(Mono.error(new RuntimeException("db")));
+
+        StepVerifier.create(paymentService.reconcilePendingPayment(payment)).expectError().verify();
+        verify(organisationLock).inTransaction(eq(orgId), any());
+    }
+
     // ──────────────────────────── getActiveSubscription ────────────────────────────
 
     @Test
-    void getActiveSubscription_memberWithActivePaidSubscription_returnsIt() {
+    void getActiveSubscription_returnsTheRunningPaidPeriod() {
         when(userRepository.findByUsername(email)).thenReturn(Mono.just(user()));
         when(memberRepository.findByOrganisationIdAndUserId(orgId, 1L)).thenReturn(Mono.just(activeMember()));
         Subscription sub = new Subscription();
         sub.setId(UUID.randomUUID());
-        sub.setOrganisationId(orgId);
-        sub.setStatus(SubscriptionStatus.ACTIVE);
-        when(subscriptionRepository.findFirstByOrganisationIdOrderByCreatedAtDesc(orgId))
-                .thenReturn(Mono.just(sub));
+        when(activationService.currentPeriod(eq(orgId), any())).thenReturn(Mono.just(sub));
+        lenient().when(subscriptionRepository.findAllByOrganisationIdAndStatusOrderByEndDateAsc(orgId, SubscriptionStatus.ACTIVE))
+                .thenReturn(Flux.empty());
 
         StepVerifier.create(paymentService.getActiveSubscription(orgId, email))
                 .expectNextMatches(s -> s.getId().equals(sub.getId()))
@@ -631,43 +761,30 @@ class PaymentServiceTest {
     }
 
     @Test
-    void getActiveSubscription_memberOnTrial_returnsIt() {
+    void getActiveSubscription_noRunningPeriod_returnsTheQueuedOne() {
         when(userRepository.findByUsername(email)).thenReturn(Mono.just(user()));
         when(memberRepository.findByOrganisationIdAndUserId(orgId, 1L)).thenReturn(Mono.just(activeMember()));
-        Subscription trial = new Subscription();
-        trial.setId(UUID.randomUUID());
-        trial.setOrganisationId(orgId);
-        trial.setStatus(SubscriptionStatus.TRIAL);
-        when(subscriptionRepository.findFirstByOrganisationIdOrderByCreatedAtDesc(orgId))
-                .thenReturn(Mono.just(trial));
+        when(activationService.currentPeriod(eq(orgId), any())).thenReturn(Mono.empty());
+        Subscription queued = new Subscription();
+        queued.setId(UUID.randomUUID());
+        queued.setStatus(SubscriptionStatus.ACTIVE);
+        queued.setStartDate(LocalDateTime.now().plusDays(5));
+        queued.setEndDate(LocalDateTime.now().plusDays(35));
+        when(subscriptionRepository.findAllByOrganisationIdAndStatusOrderByEndDateAsc(orgId, SubscriptionStatus.ACTIVE))
+                .thenReturn(Flux.just(queued));
 
         StepVerifier.create(paymentService.getActiveSubscription(orgId, email))
-                .expectNextMatches(s -> s.getId().equals(trial.getId()))
+                .expectNextMatches(s -> s.getId().equals(queued.getId()))
                 .verifyComplete();
-    }
-
-    @Test
-    void getActiveSubscription_expired_emitsInvalidRecord() {
-        when(userRepository.findByUsername(email)).thenReturn(Mono.just(user()));
-        when(memberRepository.findByOrganisationIdAndUserId(orgId, 1L)).thenReturn(Mono.just(activeMember()));
-        Subscription expired = new Subscription();
-        expired.setId(UUID.randomUUID());
-        expired.setOrganisationId(orgId);
-        expired.setStatus(SubscriptionStatus.EXPIRED);
-        when(subscriptionRepository.findFirstByOrganisationIdOrderByCreatedAtDesc(orgId))
-                .thenReturn(Mono.just(expired));
-
-        StepVerifier.create(paymentService.getActiveSubscription(orgId, email))
-                .expectError(InvalidRecord.class)
-                .verify();
     }
 
     @Test
     void getActiveSubscription_none_emitsInvalidRecord() {
         when(userRepository.findByUsername(email)).thenReturn(Mono.just(user()));
         when(memberRepository.findByOrganisationIdAndUserId(orgId, 1L)).thenReturn(Mono.just(activeMember()));
-        when(subscriptionRepository.findFirstByOrganisationIdOrderByCreatedAtDesc(orgId))
-                .thenReturn(Mono.empty());
+        when(activationService.currentPeriod(eq(orgId), any())).thenReturn(Mono.empty());
+        when(subscriptionRepository.findAllByOrganisationIdAndStatusOrderByEndDateAsc(orgId, SubscriptionStatus.ACTIVE))
+                .thenReturn(Flux.empty());
 
         StepVerifier.create(paymentService.getActiveSubscription(orgId, email))
                 .expectError(InvalidRecord.class)

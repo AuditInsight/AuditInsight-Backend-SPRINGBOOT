@@ -34,11 +34,18 @@ public class AdminFreeAccessController {
     public Mono<AdminFreeAccessResponse> start(
             Authentication authentication,
             @Valid @RequestBody StartFreeAccessRequest request) {
-        return freeAccessService.start(request.durationDays(), authentication.getName());
+        return freeAccessService.start(request.durationDays(), request.reason(), authentication.getName());
     }
 
     @PostMapping("/end")
-    public Mono<AdminFreeAccessResponse> end(Authentication authentication) {
-        return freeAccessService.end(authentication.getName());
+    public Mono<AdminFreeAccessResponse> end(Authentication authentication,
+                                             @RequestBody(required = false) java.util.Map<String, String> body) {
+        return freeAccessService.end(body == null ? null : body.get("reason"), authentication.getName());
+    }
+
+    /** Organisations that would lose access if the emergency override ended now. */
+    @GetMapping("/dependents")
+    public reactor.core.publisher.Flux<com.diana.auditinsightbackendspringboot.DTOs.EmergencyOverrideDependent> dependents() {
+        return freeAccessService.dependents();
     }
 }

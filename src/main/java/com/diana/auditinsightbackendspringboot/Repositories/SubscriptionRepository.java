@@ -15,6 +15,9 @@ public interface SubscriptionRepository extends ReactiveCrudRepository<Subscript
 
     Mono<Subscription> findByOrganisationIdAndStatus(UUID organisationId, SubscriptionStatus status);
 
+    /** All paid periods with a status (current, future-dated and lapsed), earliest end first. */
+    Flux<Subscription> findAllByOrganisationIdAndStatusOrderByEndDateAsc(UUID organisationId, SubscriptionStatus status);
+
     Flux<Subscription> findAllByOrganisationIdOrderByCreatedAtDesc(UUID organisationId);
 
     /** Admin subscriptions list — {@code status} is a nullable filter. */

@@ -23,7 +23,16 @@ import java.util.UUID;
 @Slf4j
 public class PawaPayService {
 
-    private final RestTemplate restTemplate = new RestTemplate();
+    private final RestTemplate restTemplate = buildRestTemplate();
+
+    /** Bounded waits: a hung pawaPay call must not hold a checkout (or the reconciliation sweep) open forever. */
+    private static RestTemplate buildRestTemplate() {
+        org.springframework.http.client.SimpleClientHttpRequestFactory factory =
+                new org.springframework.http.client.SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(java.time.Duration.ofSeconds(10));
+        factory.setReadTimeout(java.time.Duration.ofSeconds(30));
+        return new RestTemplate(factory);
+    }
 
     @Value("${pawapay.api.base-url}")
     private String baseUrl;
@@ -34,9 +43,26 @@ public class PawaPayService {
     @Value("${pawapay.provider}")
     private String provider;
 
-    public enum PawaPayStatus { PENDING, SUCCESSFUL, FAILED }
+    /** NOT_FOUND: pawaPay has no record of the deposit (the request never reached it). */
+    public enum PawaPayStatus { PENDING, SUCCESSFUL, FAILED, NOT_FOUND }
 
-    public record StatusResult(PawaPayStatus status, String failureReason, BigDecimal amount) {}
+    /** {@code providerReference} is the mobile money operator's own transaction id, when pawaPay reports it. */
+    public record StatusResult(PawaPayStatus status, String failureReason, BigDecimal amount, String providerReference) {
+        public StatusResult(PawaPayStatus status, String failureReason, BigDecimal amount) {
+            this(status, failureReason, amount, null);
+        }
+    }
+
+    /**
+     * pawaPay definitely did not accept the deposit (it answered with a rejection or a 4xx), so no money can move.
+     * Any other failure (timeout, connection error, 5xx) leaves the outcome unknown: the deposit may have been
+     * created, so the payment must stay PENDING and be checked again rather than marked failed.
+     */
+    public static class DepositRejectedException extends RuntimeException {
+        public DepositRejectedException(String message, Throwable cause) {
+            super(message, cause);
+        }
+    }
 
     public Mono<Void> requestDeposit(UUID depositId, BigDecimal amountRwf, String phoneNumber) {
         return Mono.fromRunnable(() -> doRequestDeposit(depositId, amountRwf, phoneNumber))
@@ -73,6 +99,8 @@ public class PawaPayService {
         try {
             response = restTemplate.exchange(baseUrl + "/v2/deposits", HttpMethod.POST,
                     new HttpEntity<>(body, authHeaders()), Map.class);
+        } catch (org.springframework.web.client.HttpClientErrorException e) {
+            throw new DepositRejectedException("pawaPay rejected the deposit request: " + e.getStatusCode(), e);
         } catch (Exception e) {
             throw new RuntimeException("pawaPay deposit request failed: " + e.getMessage(), e);
         }
@@ -85,8 +113,8 @@ public class PawaPayService {
         String status = String.valueOf(responseBody.get("status"));
         if (!"ACCEPTED".equals(status) && !"DUPLICATE_IGNORED".equals(status)) {
             Object failure = responseBody.get("failureReason");
-            throw new RuntimeException("pawaPay deposit was rejected: " + status
-                    + (failure != null ? " (" + failure + ")" : ""));
+            throw new DepositRejectedException("pawaPay deposit was rejected: " + status
+                    + (failure != null ? " (" + failure + ")" : ""), null);
         }
     }
 
@@ -105,7 +133,7 @@ public class PawaPayService {
             throw new RuntimeException("pawaPay status check returned HTTP " + response.getStatusCode());
         }
         if ("NOT_FOUND".equals(responseBody.get("status"))) {
-            throw new RuntimeException("pawaPay has no record of deposit " + depositId);
+            return new StatusResult(PawaPayStatus.NOT_FOUND, "pawaPay has no record of this payment request", null);
         }
 
         Map<String, Object> data = (Map<String, Object>) responseBody.get("data");
@@ -115,10 +143,15 @@ public class PawaPayService {
 
         BigDecimal amount = data.get("amount") != null ? new BigDecimal(String.valueOf(data.get("amount"))) : null;
         return switch (String.valueOf(data.get("status"))) {
-            case "COMPLETED" -> new StatusResult(PawaPayStatus.SUCCESSFUL, null, amount);
+            case "COMPLETED" -> new StatusResult(PawaPayStatus.SUCCESSFUL, null, amount, providerReference(data));
             case "FAILED" -> new StatusResult(PawaPayStatus.FAILED, extractFailureReason(data), amount);
             default -> new StatusResult(PawaPayStatus.PENDING, null, amount); // ACCEPTED, PROCESSING, IN_RECONCILIATION
         };
+    }
+
+    private static String providerReference(Map<String, Object> data) {
+        Object ref = data.get("providerTransactionId");
+        return ref == null ? null : String.valueOf(ref);
     }
 
     /**

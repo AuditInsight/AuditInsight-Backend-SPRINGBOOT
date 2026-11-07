@@ -20,5 +20,6 @@ public class AdminAuditLogResponse {
     private String targetId;
     private String beforeState;
     private String afterState;
+    private String reason;
     private LocalDateTime createdAt;
 }

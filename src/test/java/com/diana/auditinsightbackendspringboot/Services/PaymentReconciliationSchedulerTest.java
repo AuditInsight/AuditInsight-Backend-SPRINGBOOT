@@ -32,6 +32,7 @@ class PaymentReconciliationSchedulerTest {
         scheduler = new PaymentReconciliationScheduler(paymentRepository, paymentService);
         ReflectionTestUtils.setField(scheduler, "staleAfterMinutes", 15L);
         ReflectionTestUtils.setField(scheduler, "expireAfterHours", 24L);
+        org.mockito.Mockito.lenient().when(paymentService.activateUnlinkedSuccessfulPayments()).thenReturn(Flux.empty());
     }
 
     private Payment pendingPayment(LocalDateTime createdAt) {

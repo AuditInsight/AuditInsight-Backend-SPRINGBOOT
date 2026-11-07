@@ -3,24 +3,30 @@ package com.diana.auditinsightbackendspringboot.Services;
 import com.diana.auditinsightbackendspringboot.Enum.MemberStatus;
 import com.diana.auditinsightbackendspringboot.Enum.Role;
 import com.diana.auditinsightbackendspringboot.Enum.SubscriptionStatus;
+import com.diana.auditinsightbackendspringboot.Enum.TrialGrantStatus;
 import com.diana.auditinsightbackendspringboot.Exceptions.Custom.ForbiddenException;
 import com.diana.auditinsightbackendspringboot.Models.OrganisationMember;
 import com.diana.auditinsightbackendspringboot.Models.Subscription;
+import com.diana.auditinsightbackendspringboot.Models.TrialGrant;
 import com.diana.auditinsightbackendspringboot.Models.User;
 import com.diana.auditinsightbackendspringboot.Repositories.OrganisationMemberRepository;
 import com.diana.auditinsightbackendspringboot.Repositories.SubscriptionRepository;
+import com.diana.auditinsightbackendspringboot.Repositories.TrialGrantRepository;
 import com.diana.auditinsightbackendspringboot.Repositories.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
 import java.time.LocalDateTime;
+import java.util.Optional;
 import java.util.UUID;
 
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -29,6 +35,7 @@ class OrgAccessServiceTest {
     @Mock private UserRepository userRepository;
     @Mock private OrganisationMemberRepository memberRepository;
     @Mock private SubscriptionRepository subscriptionRepository;
+    @Mock private TrialGrantRepository trialGrantRepository;
     @Mock private PlatformFreeAccessService platformFreeAccessService;
 
     private final UUID organisationId = UUID.randomUUID();
@@ -37,9 +44,13 @@ class OrgAccessServiceTest {
 
     @BeforeEach
     void setUp() {
-        orgAccessService = new OrgAccessService(
-                userRepository, memberRepository, subscriptionRepository, platformFreeAccessService);
-        when(platformFreeAccessService.isEnabled()).thenReturn(Mono.just(false));
+        orgAccessService = new OrgAccessService(userRepository, memberRepository,
+                new EntitlementService(subscriptionRepository, trialGrantRepository, platformFreeAccessService));
+        lenient().when(platformFreeAccessService.activeUntil()).thenReturn(Mono.just(Optional.empty()));
+        lenient().when(subscriptionRepository.findAllByOrganisationIdAndStatusOrderByEndDateAsc(
+                organisationId, SubscriptionStatus.ACTIVE)).thenReturn(Flux.empty());
+        lenient().when(trialGrantRepository.findFirstByOrganisationIdAndStatus(organisationId, TrialGrantStatus.ACTIVE))
+                .thenReturn(Mono.empty());
 
         User user = new User();
         user.setId(1L);
@@ -56,10 +67,8 @@ class OrgAccessServiceTest {
     }
 
     @Test
-    void resolveGatedMember_allowsCurrentPaidSubscription() {
-        Subscription subscription = subscription(SubscriptionStatus.ACTIVE, LocalDateTime.now().plusDays(30));
-        when(subscriptionRepository.findFirstByOrganisationIdOrderByCreatedAtDesc(organisationId))
-                .thenReturn(Mono.just(subscription));
+    void allowsCurrentPaidPeriod() {
+        paidPeriods(period(LocalDateTime.now().minusDays(1), LocalDateTime.now().plusDays(30)));
 
         StepVerifier.create(orgAccessService.resolveGatedMember(organisationId, email))
                 .expectNextMatches(context -> context.role() == Role.CLIENT)
@@ -67,8 +76,9 @@ class OrgAccessServiceTest {
     }
 
     @Test
-    void resolveGatedMember_allowsUnpaidOrganisationDuringPlatformFreeAccess() {
-        when(platformFreeAccessService.isEnabled()).thenReturn(Mono.just(true));
+    void allowsUnpaidOrganisationDuringEmergencyOverride() {
+        when(platformFreeAccessService.activeUntil())
+                .thenReturn(Mono.just(Optional.of(LocalDateTime.now().plusDays(3))));
 
         StepVerifier.create(orgAccessService.resolveGatedMember(organisationId, email))
                 .expectNextMatches(context -> context.role() == Role.CLIENT)
@@ -76,10 +86,27 @@ class OrgAccessServiceTest {
     }
 
     @Test
-    void resolveGatedMember_rejectsUnpaidTrialEvenWhileTrialPeriodIsCurrent() {
-        Subscription trial = subscription(SubscriptionStatus.TRIAL, LocalDateTime.now().plusDays(30));
-        when(subscriptionRepository.findFirstByOrganisationIdOrderByCreatedAtDesc(organisationId))
-                .thenReturn(Mono.just(trial));
+    void allowsCurrentAuthorisedTrial() {
+        TrialGrant grant = new TrialGrant();
+        grant.setStatus(TrialGrantStatus.ACTIVE);
+        grant.setStartsAt(LocalDateTime.now().minusDays(1));
+        grant.setEndsAt(LocalDateTime.now().plusDays(5));
+        when(trialGrantRepository.findFirstByOrganisationIdAndStatus(organisationId, TrialGrantStatus.ACTIVE))
+                .thenReturn(Mono.just(grant));
+
+        StepVerifier.create(orgAccessService.resolveGatedMember(organisationId, email))
+                .expectNextMatches(context -> context.role() == Role.CLIENT)
+                .verifyComplete();
+    }
+
+    @Test
+    void rejectsExpiredTrialGrant() {
+        TrialGrant grant = new TrialGrant();
+        grant.setStatus(TrialGrantStatus.ACTIVE);
+        grant.setStartsAt(LocalDateTime.now().minusDays(10));
+        grant.setEndsAt(LocalDateTime.now().minusMinutes(1));
+        when(trialGrantRepository.findFirstByOrganisationIdAndStatus(organisationId, TrialGrantStatus.ACTIVE))
+                .thenReturn(Mono.just(grant));
 
         StepVerifier.create(orgAccessService.resolveGatedMember(organisationId, email))
                 .expectErrorMatches(error -> error instanceof ForbiddenException
@@ -88,10 +115,8 @@ class OrgAccessServiceTest {
     }
 
     @Test
-    void resolveGatedMember_rejectsExpiredPaidSubscription() {
-        Subscription expired = subscription(SubscriptionStatus.ACTIVE, LocalDateTime.now().minusDays(1));
-        when(subscriptionRepository.findFirstByOrganisationIdOrderByCreatedAtDesc(organisationId))
-                .thenReturn(Mono.just(expired));
+    void rejectsPaidPeriodThatHasNotStartedYet() {
+        paidPeriods(period(LocalDateTime.now().plusDays(2), LocalDateTime.now().plusDays(32)));
 
         StepVerifier.create(orgAccessService.resolveGatedMember(organisationId, email))
                 .expectError(ForbiddenException.class)
@@ -99,19 +124,31 @@ class OrgAccessServiceTest {
     }
 
     @Test
-    void resolveGatedMember_rejectsOrganisationWithoutSubscription() {
-        when(subscriptionRepository.findFirstByOrganisationIdOrderByCreatedAtDesc(organisationId))
-                .thenReturn(Mono.empty());
+    void rejectsExpiredPaidPeriod() {
+        paidPeriods(period(LocalDateTime.now().minusDays(31), LocalDateTime.now().minusDays(1)));
 
         StepVerifier.create(orgAccessService.resolveGatedMember(organisationId, email))
                 .expectError(ForbiddenException.class)
                 .verify();
     }
 
-    private Subscription subscription(SubscriptionStatus status, LocalDateTime endDate) {
+    @Test
+    void rejectsOrganisationWithoutAnyAccess() {
+        StepVerifier.create(orgAccessService.resolveGatedMember(organisationId, email))
+                .expectError(ForbiddenException.class)
+                .verify();
+    }
+
+    private void paidPeriods(Subscription... periods) {
+        when(subscriptionRepository.findAllByOrganisationIdAndStatusOrderByEndDateAsc(
+                organisationId, SubscriptionStatus.ACTIVE)).thenReturn(Flux.just(periods));
+    }
+
+    private Subscription period(LocalDateTime start, LocalDateTime end) {
         Subscription subscription = new Subscription();
-        subscription.setStatus(status);
-        subscription.setEndDate(endDate);
+        subscription.setStatus(SubscriptionStatus.ACTIVE);
+        subscription.setStartDate(start);
+        subscription.setEndDate(end);
         return subscription;
     }
 }

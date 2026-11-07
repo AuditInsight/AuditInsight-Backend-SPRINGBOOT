@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS organisation (
     fiscal_year_start VARCHAR(5)   NOT NULL DEFAULT '01-01',
     fiscal_year_end   VARCHAR(5)   NOT NULL DEFAULT '12-31',
     default_currency  VARCHAR(10)  NOT NULL DEFAULT 'USD',
+    requested_subscription_type VARCHAR(20),
     created_at        TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -135,6 +136,8 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     end_date              TIMESTAMP,
     trial_reminder_sent   BOOLEAN       NOT NULL DEFAULT FALSE,
     expiry_reminder_sent  BOOLEAN       NOT NULL DEFAULT FALSE,
+    source                VARCHAR(30)   NOT NULL DEFAULT 'LEGACY',
+    admin_reason          VARCHAR(4000),
     created_by            BIGINT,
     created_at            TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
     updated_at            TIMESTAMP     DEFAULT CURRENT_TIMESTAMP
@@ -166,6 +169,7 @@ CREATE TABLE IF NOT EXISTS admin_audit_log (
     target_id       VARCHAR(100) NOT NULL,
     before_state    VARCHAR(4000),
     after_state     VARCHAR(4000),
+    reason          VARCHAR(4000),
     created_at      TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -183,3 +187,48 @@ VALUES
     ('MONTHLY',     15000,  'RWF', 30,  NULL, CURRENT_TIMESTAMP),
     ('SIX_MONTHS',  80000,  'RWF', 180, NULL, CURRENT_TIMESTAMP),
     ('ANNUAL',      150000, 'RWF', 365, NULL, CURRENT_TIMESTAMP);
+-- V27: trials and campaigns (partial unique indexes are Postgres-only and enforced there).
+CREATE TABLE IF NOT EXISTS trial_campaigns (
+    id            UUID         DEFAULT RANDOM_UUID() PRIMARY KEY,
+    name          VARCHAR(120) NOT NULL,
+    duration_days INT          NOT NULL,
+    starts_at     TIMESTAMP    NOT NULL,
+    ends_at       TIMESTAMP,
+    enabled       BOOLEAN      NOT NULL DEFAULT FALSE,
+    created_by    BIGINT       NOT NULL,
+    created_at    TIMESTAMP    NOT NULL,
+    updated_at    TIMESTAMP    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS trial_grants (
+    id              UUID        DEFAULT RANDOM_UUID() PRIMARY KEY,
+    organisation_id UUID        NOT NULL,
+    owner_client_id UUID        NOT NULL,
+    source          VARCHAR(20) NOT NULL,
+    campaign_id     UUID,
+    status          VARCHAR(20) NOT NULL,
+    duration_days   INT         NOT NULL,
+    starts_at       TIMESTAMP   NOT NULL,
+    ends_at         TIMESTAMP   NOT NULL,
+    granted_by      BIGINT      NOT NULL,
+    reason          VARCHAR(4000),
+    created_at      TIMESTAMP   NOT NULL,
+    updated_at      TIMESTAMP   NOT NULL,
+    revoked_at      TIMESTAMP,
+    revoked_by      BIGINT,
+    revoke_reason   VARCHAR(4000),
+    reminder_sent   BOOLEAN     NOT NULL DEFAULT FALSE
+);
+
+CREATE TABLE IF NOT EXISTS trial_grant_events (
+    id              UUID        DEFAULT RANDOM_UUID() PRIMARY KEY,
+    grant_id        UUID        NOT NULL,
+    organisation_id UUID        NOT NULL,
+    event_type      VARCHAR(30) NOT NULL,
+    old_ends_at     TIMESTAMP,
+    new_ends_at     TIMESTAMP,
+    admin_user_id   BIGINT,
+    reason          VARCHAR(4000),
+    details         VARCHAR(4000),
+    created_at      TIMESTAMP   NOT NULL
+);

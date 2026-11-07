@@ -3,19 +3,15 @@ package com.diana.auditinsightbackendspringboot.Services;
 import com.diana.auditinsightbackendspringboot.Enum.MemberStatus;
 import com.diana.auditinsightbackendspringboot.Enum.Permission;
 import com.diana.auditinsightbackendspringboot.Enum.Role;
-import com.diana.auditinsightbackendspringboot.Enum.SubscriptionStatus;
 import com.diana.auditinsightbackendspringboot.Exceptions.Custom.ForbiddenException;
 import com.diana.auditinsightbackendspringboot.Exceptions.Custom.InvalidRecord;
 import com.diana.auditinsightbackendspringboot.Models.OrganisationMember;
-import com.diana.auditinsightbackendspringboot.Models.Subscription;
 import com.diana.auditinsightbackendspringboot.Models.User;
 import com.diana.auditinsightbackendspringboot.Repositories.OrganisationMemberRepository;
-import com.diana.auditinsightbackendspringboot.Repositories.SubscriptionRepository;
 import com.diana.auditinsightbackendspringboot.Repositories.UserRepository;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 
-import java.time.LocalDateTime;
 import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.Map;
@@ -50,16 +46,13 @@ public class OrgAccessService {
 
     private final UserRepository userRepo;
     private final OrganisationMemberRepository memberRepo;
-    private final SubscriptionRepository subscriptionRepo;
-    private final PlatformFreeAccessService platformFreeAccessService;
+    private final EntitlementService entitlementService;
 
     public OrgAccessService(UserRepository userRepo, OrganisationMemberRepository memberRepo,
-                             SubscriptionRepository subscriptionRepo,
-                             PlatformFreeAccessService platformFreeAccessService) {
+                             EntitlementService entitlementService) {
         this.userRepo = userRepo;
         this.memberRepo = memberRepo;
-        this.subscriptionRepo = subscriptionRepo;
-        this.platformFreeAccessService = platformFreeAccessService;
+        this.entitlementService = entitlementService;
     }
 
     public record OrgMemberContext(User user, OrganisationMember member) {
@@ -84,27 +77,17 @@ public class OrgAccessService {
                                 : Mono.just(new OrgMemberContext(user, member))));
     }
 
-    /** Active org membership, gated on the organisation having a current paid subscription. */
+    /**
+     * Active org membership, gated on the organisation having workspace access right now: a current paid period,
+     * a Super Admin-authorised trial, or the emergency override (see {@link EntitlementService}).
+     */
     public Mono<OrgMemberContext> resolveGatedMember(UUID organisationId, String email) {
         return resolveActiveMember(organisationId, email)
-                .flatMap(ctx -> platformFreeAccessService.isEnabled()
-                        .flatMap(freeAccess -> freeAccess
+                .flatMap(ctx -> entitlementService.resolve(organisationId)
+                        .flatMap(entitlement -> entitlement.hasAccess()
                                 ? Mono.just(ctx)
-                                : assertSubscriptionCurrent(organisationId).thenReturn(ctx)));
-    }
-
-    private Mono<Void> assertSubscriptionCurrent(UUID organisationId) {
-        return subscriptionRepo.findFirstByOrganisationIdOrderByCreatedAtDesc(organisationId)
-                .switchIfEmpty(Mono.error(new ForbiddenException(
-                        "A paid subscription is required to use this feature. Please complete checkout to continue.")))
-                .flatMap(this::assertNotExpired);
-    }
-
-    private Mono<Void> assertNotExpired(Subscription subscription) {
-        boolean active = subscription.getStatus() == SubscriptionStatus.ACTIVE
-                && subscription.getEndDate() != null
-                && subscription.getEndDate().isAfter(LocalDateTime.now());
-        return active ? Mono.empty() : Mono.error(new ForbiddenException(
-                "A paid subscription is required to use this feature. Please complete checkout to continue."));
+                                : Mono.error(new ForbiddenException(
+                                        "A paid subscription is required to use this feature. "
+                                                + "Please complete checkout to continue."))));
     }
 }

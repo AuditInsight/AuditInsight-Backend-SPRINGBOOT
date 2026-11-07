@@ -5,7 +5,6 @@ import com.diana.auditinsightbackendspringboot.Enum.InvitationStatus;
 import com.diana.auditinsightbackendspringboot.Enum.MemberStatus;
 import com.diana.auditinsightbackendspringboot.Enum.OrganisationType;
 import com.diana.auditinsightbackendspringboot.Enum.Role;
-import com.diana.auditinsightbackendspringboot.Enum.SubscriptionStatus;
 import com.diana.auditinsightbackendspringboot.Exceptions.Custom.InvalidRecord;
 import com.diana.auditinsightbackendspringboot.Models.*;
 import com.diana.auditinsightbackendspringboot.Repositories.*;
@@ -30,7 +29,7 @@ public class OrganisationService {
     private final OrganisationMemberRepository memberRepo;
     private final OrganisationCurrencyRepository currencyRepo;
     private final OrganisationInvitationRepository invitationRepo;
-    private final SubscriptionRepository subscriptionRepo;
+    private final TrialCampaignService trialCampaignService;
     private final UserRepository userRepo;
     private final ClientRepository clientRepo;
     private final AuditorRepository auditorRepo;
@@ -42,7 +41,7 @@ public class OrganisationService {
             OrganisationMemberRepository memberRepo,
             OrganisationCurrencyRepository currencyRepo,
             OrganisationInvitationRepository invitationRepo,
-            SubscriptionRepository subscriptionRepo,
+            TrialCampaignService trialCampaignService,
             UserRepository userRepo,
             ClientRepository clientRepo,
             AuditorRepository auditorRepo,
@@ -52,7 +51,7 @@ public class OrganisationService {
         this.memberRepo = memberRepo;
         this.currencyRepo = currencyRepo;
         this.invitationRepo = invitationRepo;
-        this.subscriptionRepo = subscriptionRepo;
+        this.trialCampaignService = trialCampaignService;
         this.userRepo = userRepo;
         this.clientRepo = clientRepo;
         this.auditorRepo = auditorRepo;
@@ -173,6 +172,7 @@ public class OrganisationService {
                             org.setIndustry(request.getIndustry());
                             org.setCountryCode(request.getCountryCode());
                             org.setSize(request.getSize());
+                            org.setRequestedSubscriptionType(request.getSubscriptionType());
                             org.setFiscalYearStart(request.getFiscalYearStart());
                             org.setFiscalYearEnd(request.getFiscalYearEnd());
                             org.setDefaultCurrency(currencies.get(0));
@@ -201,7 +201,8 @@ public class OrganisationService {
 
                                 return memberRepo.save(ownerMember)
                                         .thenMany(saveCurrencies)
-                                        .then(createTrialSubscription(saved.getId(), user.getId()))
+                                        // Paid by default: no automatic trial. Only an enabled campaign can grant one.
+                                        .then(trialCampaignService.grantOnRegistration(saved))
                                         .then(buildResponse("Organisation created successfully", saved));
                             });
                         })
@@ -209,22 +210,6 @@ public class OrganisationService {
     }
 
 
-    /**
-     * Every new organisation gets a 30-day free trial — purely an internal subscription state,
-     * no payment/PawaPay transaction is created for it.
-     */
-    private Mono<Subscription> createTrialSubscription(UUID organisationId, Long ownerUserId) {
-        LocalDateTime now = LocalDateTime.now();
-        Subscription trial = new Subscription();
-        trial.setOrganisationId(organisationId);
-        trial.setStatus(SubscriptionStatus.TRIAL);
-        trial.setStartDate(now);
-        trial.setEndDate(now.plusDays(30));
-        trial.setCreatedBy(ownerUserId);
-        trial.setCreatedAt(now);
-        trial.setUpdatedAt(now);
-        return subscriptionRepo.save(trial);
-    }
 
 
     public Flux<Organisation> listMyOrganisations(String email) {

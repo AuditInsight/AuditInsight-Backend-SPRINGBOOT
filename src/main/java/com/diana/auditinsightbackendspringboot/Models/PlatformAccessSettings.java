@@ -28,6 +28,10 @@ public class PlatformAccessSettings {
     @Column("updated_at")
     private LocalDateTime updatedAt;
 
+    // Why the emergency override was switched on (required).
+    @Column("reason")
+    private String reason;
+
     @Column("updated_by")
     private Long updatedBy;
 }

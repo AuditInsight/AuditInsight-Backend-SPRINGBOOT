@@ -73,7 +73,7 @@ class AdminOrganisationServiceTest {
     void changeSubscription_organisationHasNoActiveSubscription_capturesNullBeforeState() {
         when(organisationRepository.findById(orgId)).thenReturn(Mono.just(organisation()));
         when(userRepository.findByUsername(ACTING_ADMIN)).thenReturn(Mono.just(admin()));
-        when(subscriptionRepository.findByOrganisationIdAndStatus(orgId, SubscriptionStatus.ACTIVE))
+        when(activationService.currentPeriod(eq(orgId), any()))
                 .thenReturn(Mono.empty());
 
         Subscription after = new Subscription();
@@ -83,10 +83,10 @@ class AdminOrganisationServiceTest {
         after.setStatus(SubscriptionStatus.ACTIVE);
         after.setStartDate(LocalDateTime.now());
         after.setEndDate(LocalDateTime.now().plusDays(365));
-        when(activationService.adminChangeSubscription(orgId, SubscriptionType.ANNUAL, null, 1L))
+        when(activationService.adminChangeSubscription(orgId, SubscriptionType.ANNUAL, null, 1L, null))
                 .thenReturn(Mono.just(after));
         when(adminAuditService.record(eq(1L), eq("CHANGE_SUBSCRIPTION"), eq("ORGANISATION"), eq(orgId.toString()),
-                isNull(), any())).thenReturn(Mono.just(new AdminAuditLog()));
+                isNull(), any(), isNull())).thenReturn(Mono.just(new AdminAuditLog()));
 
         AdminChangeSubscriptionRequest request = new AdminChangeSubscriptionRequest();
         request.setSubscriptionType(SubscriptionType.ANNUAL);
@@ -97,7 +97,7 @@ class AdminOrganisationServiceTest {
                 .verifyComplete();
 
         verify(adminAuditService).record(eq(1L), eq("CHANGE_SUBSCRIPTION"), eq("ORGANISATION"),
-                eq(orgId.toString()), isNull(), any());
+                eq(orgId.toString()), isNull(), any(), isNull());
     }
 
     @Test
@@ -110,7 +110,7 @@ class AdminOrganisationServiceTest {
         existing.setOrganisationId(orgId);
         existing.setSubscriptionType(SubscriptionType.MONTHLY);
         existing.setStatus(SubscriptionStatus.ACTIVE);
-        when(subscriptionRepository.findByOrganisationIdAndStatus(orgId, SubscriptionStatus.ACTIVE))
+        when(activationService.currentPeriod(eq(orgId), any()))
                 .thenReturn(Mono.just(existing));
 
         Subscription after = new Subscription();
@@ -118,10 +118,10 @@ class AdminOrganisationServiceTest {
         after.setOrganisationId(orgId);
         after.setSubscriptionType(SubscriptionType.SIX_MONTHS);
         after.setStatus(SubscriptionStatus.ACTIVE);
-        when(activationService.adminChangeSubscription(orgId, SubscriptionType.SIX_MONTHS, null, 1L))
+        when(activationService.adminChangeSubscription(orgId, SubscriptionType.SIX_MONTHS, null, 1L, null))
                 .thenReturn(Mono.just(after));
         when(adminAuditService.record(eq(1L), eq("CHANGE_SUBSCRIPTION"), eq("ORGANISATION"),
-                eq(orgId.toString()), any(), any())).thenReturn(Mono.just(new AdminAuditLog()));
+                eq(orgId.toString()), any(), any(), isNull())).thenReturn(Mono.just(new AdminAuditLog()));
 
         AdminChangeSubscriptionRequest request = new AdminChangeSubscriptionRequest();
         request.setSubscriptionType(SubscriptionType.SIX_MONTHS);
@@ -130,7 +130,7 @@ class AdminOrganisationServiceTest {
                 .expectNextMatches(summary -> summary.getSubscriptionType() == SubscriptionType.SIX_MONTHS)
                 .verifyComplete();
 
-        verify(activationService).adminChangeSubscription(orgId, SubscriptionType.SIX_MONTHS, null, 1L);
+        verify(activationService).adminChangeSubscription(orgId, SubscriptionType.SIX_MONTHS, null, 1L, null);
     }
 
     @Test
@@ -144,6 +144,6 @@ class AdminOrganisationServiceTest {
                 .expectError(InvalidRecord.class)
                 .verify();
 
-        verify(activationService, never()).adminChangeSubscription(any(), any(), any(), any());
+        verify(activationService, never()).adminChangeSubscription(any(), any(), any(), any(), any());
     }
 }

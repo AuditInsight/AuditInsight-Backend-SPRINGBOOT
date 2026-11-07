@@ -40,4 +40,7 @@ public class CreateOrganisationRequest {
     @NotBlank(message = "provide the company size")
     private String size;
 
+    // Optional: the plan chosen during onboarding, kept so payment can be completed later without choosing again.
+    private com.diana.auditinsightbackendspringboot.Enum.SubscriptionType subscriptionType;
+
 }

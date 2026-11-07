@@ -44,6 +44,10 @@ public class PaymentReconciliationScheduler {
                 .flatMap(payment -> resolve(payment, expireCutoff))
                 .doOnError(e -> log.error("Payment reconciliation sweep failed: {}", e.getMessage()))
                 .subscribe();
+
+        paymentService.activateUnlinkedSuccessfulPayments()
+                .doOnError(e -> log.error("Unlinked payment sweep failed: {}", e.getMessage()))
+                .subscribe();
     }
 
     private Mono<Payment> resolve(Payment payment, LocalDateTime expireCutoff) {

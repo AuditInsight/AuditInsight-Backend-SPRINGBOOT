@@ -36,6 +36,10 @@ public class AdminAuditLog {
     @Column("after_state")
     private String afterState;
 
+    // The administrator's stated reason for the action (required for trials, campaigns and emergency access).
+    @Column("reason")
+    private String reason;
+
     @Column("created_at")
     private LocalDateTime createdAt;
 }

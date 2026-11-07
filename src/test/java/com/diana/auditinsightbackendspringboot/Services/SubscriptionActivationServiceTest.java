@@ -1,257 +1,265 @@
 package com.diana.auditinsightbackendspringboot.Services;
 
+import com.diana.auditinsightbackendspringboot.Enum.PaymentStatus;
+import com.diana.auditinsightbackendspringboot.Enum.SubscriptionSource;
 import com.diana.auditinsightbackendspringboot.Enum.SubscriptionStatus;
 import com.diana.auditinsightbackendspringboot.Enum.SubscriptionType;
+import com.diana.auditinsightbackendspringboot.Enum.TrialGrantStatus;
+import com.diana.auditinsightbackendspringboot.Exceptions.Custom.InvalidRecord;
 import com.diana.auditinsightbackendspringboot.Models.Payment;
 import com.diana.auditinsightbackendspringboot.Models.PlanPrice;
 import com.diana.auditinsightbackendspringboot.Models.Subscription;
+import com.diana.auditinsightbackendspringboot.Models.TrialGrant;
 import com.diana.auditinsightbackendspringboot.Repositories.PaymentRepository;
 import com.diana.auditinsightbackendspringboot.Repositories.SubscriptionRepository;
+import com.diana.auditinsightbackendspringboot.Repositories.TrialGrantRepository;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
-import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.LocalDateTime;
-import java.time.temporal.ChronoUnit;
 import java.util.UUID;
+import java.util.function.Supplier;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class SubscriptionActivationServiceTest {
 
     @Mock private PaymentRepository paymentRepository;
     @Mock private SubscriptionRepository subscriptionRepository;
+    @Mock private TrialGrantRepository trialGrantRepository;
     @Mock private PlanPriceService planPriceService;
+    @Mock private OrganisationLock organisationLock;
 
-    private SubscriptionActivationService activationService;
+    private SubscriptionActivationService service;
+    private final UUID orgId = UUID.randomUUID();
 
-    private void init() {
-        activationService = new SubscriptionActivationService(paymentRepository, subscriptionRepository, planPriceService);
+    @BeforeEach
+    @SuppressWarnings("unchecked")
+    void setUp() {
+        service = new SubscriptionActivationService(paymentRepository, subscriptionRepository, trialGrantRepository,
+                planPriceService, organisationLock);
+        lenient().when(organisationLock.inTransaction(any(), any()))
+                .thenAnswer(inv -> ((Supplier<Mono<?>>) inv.getArgument(1)).get());
+        lenient().when(subscriptionRepository.save(any())).thenAnswer(inv -> {
+            Subscription s = inv.getArgument(0);
+            if (s.getId() == null) s.setId(UUID.randomUUID());
+            return Mono.just(s);
+        });
+        lenient().when(subscriptionRepository.findAllByOrganisationIdAndStatusOrderByEndDateAsc(orgId, SubscriptionStatus.ACTIVE))
+                .thenReturn(Flux.empty());
+        lenient().when(trialGrantRepository.findFirstByOrganisationIdAndStatus(orgId, TrialGrantStatus.ACTIVE))
+                .thenReturn(Mono.empty());
+        lenient().when(planPriceService.getPrice(SubscriptionType.MONTHLY)).thenReturn(Mono.just(price(30)));
+        lenient().when(paymentRepository.linkSubscriptionIfAbsent(any(), any())).thenReturn(Mono.just(1));
     }
 
-    private PlanPrice planPrice(SubscriptionType type, String price, int durationDays) {
-        PlanPrice p = new PlanPrice();
-        p.setSubscriptionType(type);
-        p.setPrice(new BigDecimal(price));
-        p.setCurrency("RWF");
-        p.setDurationDays(durationDays);
-        return p;
+    // ── payments ──────────────────────────────────────────────────────────────────
+
+    @Test
+    void firstPayment_startsPaidPeriodNow() {
+        Payment payment = payment();
+        when(paymentRepository.findById(payment.getId())).thenReturn(Mono.just(payment));
+
+        LocalDateTime before = LocalDateTime.now();
+        StepVerifier.create(service.activateFromPayment(payment))
+                .assertNext(s -> {
+                    assertThat(s.getSource()).isEqualTo(SubscriptionSource.PAYMENT);
+                    assertThat(s.getStatus()).isEqualTo(SubscriptionStatus.ACTIVE);
+                    assertThat(s.getStartDate()).isBetween(before, LocalDateTime.now());
+                    assertThat(Duration.between(s.getStartDate(), s.getEndDate())).isEqualTo(Duration.ofDays(30));
+                })
+                .verifyComplete();
+        verify(paymentRepository).linkSubscriptionIfAbsent(any(), any());
     }
 
-    private Payment payment(UUID orgId, SubscriptionType type) {
+    @Test
+    void renewingEarly_queuesNewPeriodAfterCurrentOne_withoutTouchingIt() {
+        Subscription current = period(LocalDateTime.now().minusDays(20), LocalDateTime.now().plusDays(10));
+        LocalDateTime currentEnd = current.getEndDate();
+        when(subscriptionRepository.findAllByOrganisationIdAndStatusOrderByEndDateAsc(orgId, SubscriptionStatus.ACTIVE))
+                .thenReturn(Flux.just(current));
+        Payment payment = payment();
+        when(paymentRepository.findById(payment.getId())).thenReturn(Mono.just(payment));
+
+        StepVerifier.create(service.activateFromPayment(payment))
+                .assertNext(s -> {
+                    assertThat(s.getId()).isNotEqualTo(current.getId());
+                    assertThat(s.getStartDate()).isEqualTo(currentEnd);
+                    assertThat(s.getEndDate()).isEqualTo(currentEnd.plusDays(30));
+                })
+                .verifyComplete();
+        assertThat(current.getEndDate()).isEqualTo(currentEnd);
+    }
+
+    @Test
+    void payingDuringTrial_startsPaidTimeWhenTrialEnds() {
+        TrialGrant trial = new TrialGrant();
+        trial.setStatus(TrialGrantStatus.ACTIVE);
+        trial.setStartsAt(LocalDateTime.now().minusDays(3));
+        trial.setEndsAt(LocalDateTime.now().plusDays(11));
+        when(trialGrantRepository.findFirstByOrganisationIdAndStatus(orgId, TrialGrantStatus.ACTIVE))
+                .thenReturn(Mono.just(trial));
+        Payment payment = payment();
+        when(paymentRepository.findById(payment.getId())).thenReturn(Mono.just(payment));
+
+        StepVerifier.create(service.activateFromPayment(payment))
+                .assertNext(s -> {
+                    assertThat(s.getStartDate()).isEqualTo(trial.getEndsAt());
+                    assertThat(s.getEndDate()).isEqualTo(trial.getEndsAt().plusDays(30));
+                })
+                .verifyComplete();
+    }
+
+    @Test
+    void secondPaymentDuringTrial_queuesAfterTheFirstPaidPeriod() {
+        TrialGrant trial = new TrialGrant();
+        trial.setStatus(TrialGrantStatus.ACTIVE);
+        trial.setStartsAt(LocalDateTime.now().minusDays(3));
+        trial.setEndsAt(LocalDateTime.now().plusDays(11));
+        when(trialGrantRepository.findFirstByOrganisationIdAndStatus(orgId, TrialGrantStatus.ACTIVE))
+                .thenReturn(Mono.just(trial));
+        Subscription queued = period(trial.getEndsAt(), trial.getEndsAt().plusDays(30));
+        when(subscriptionRepository.findAllByOrganisationIdAndStatusOrderByEndDateAsc(orgId, SubscriptionStatus.ACTIVE))
+                .thenReturn(Flux.just(queued));
+        Payment payment = payment();
+        when(paymentRepository.findById(payment.getId())).thenReturn(Mono.just(payment));
+
+        StepVerifier.create(service.activateFromPayment(payment))
+                .assertNext(s -> assertThat(s.getStartDate()).isEqualTo(queued.getEndDate()))
+                .verifyComplete();
+    }
+
+    @Test
+    void expiredTrialIsIgnored() {
+        TrialGrant trial = new TrialGrant();
+        trial.setStatus(TrialGrantStatus.ACTIVE);
+        trial.setStartsAt(LocalDateTime.now().minusDays(10));
+        trial.setEndsAt(LocalDateTime.now().minusDays(1));
+        when(trialGrantRepository.findFirstByOrganisationIdAndStatus(orgId, TrialGrantStatus.ACTIVE))
+                .thenReturn(Mono.just(trial));
+        Payment payment = payment();
+        when(paymentRepository.findById(payment.getId())).thenReturn(Mono.just(payment));
+
+        LocalDateTime before = LocalDateTime.now();
+        StepVerifier.create(service.activateFromPayment(payment))
+                .assertNext(s -> assertThat(s.getStartDate()).isBetween(before, LocalDateTime.now()))
+                .verifyComplete();
+    }
+
+    @Test
+    void alreadyLinkedPayment_returnsItsPeriodAndBuysNothing() {
+        Payment payment = payment();
+        Subscription linked = period(LocalDateTime.now(), LocalDateTime.now().plusDays(30));
+        payment.setSubscriptionId(linked.getId());
+        when(paymentRepository.findById(payment.getId())).thenReturn(Mono.just(payment));
+        when(subscriptionRepository.findById(linked.getId())).thenReturn(Mono.just(linked));
+
+        StepVerifier.create(service.activateFromPayment(payment)).expectNext(linked).verifyComplete();
+        verify(subscriptionRepository, never()).save(any());
+    }
+
+    @Test
+    void activationRunsUnderTheOrganisationLock() {
+        Payment payment = payment();
+        when(paymentRepository.findById(payment.getId())).thenReturn(Mono.just(payment));
+
+        StepVerifier.create(service.activateFromPayment(payment)).expectNextCount(1).verifyComplete();
+        verify(organisationLock).inTransaction(org.mockito.ArgumentMatchers.eq(orgId), any());
+    }
+
+    // ── Super Admin changes ───────────────────────────────────────────────────────
+
+    @Test
+    void adminChange_withoutCurrentPeriod_createsComplimentaryPeriodWithReason() {
+        StepVerifier.create(service.adminChangeSubscription(orgId, SubscriptionType.MONTHLY, null, 5L, "Partner"))
+                .assertNext(s -> {
+                    assertThat(s.getSource()).isEqualTo(SubscriptionSource.ADMIN_COMPLIMENTARY);
+                    assertThat(s.getAdminReason()).isEqualTo("Partner");
+                    assertThat(s.getCreatedBy()).isEqualTo(5L);
+                    assertThat(Duration.between(s.getStartDate(), s.getEndDate())).isEqualTo(Duration.ofDays(30));
+                })
+                .verifyComplete();
+    }
+
+    @Test
+    void adminChange_onCurrentPeriod_changesItAndMovesQueuedPeriods() {
+        Subscription current = period(LocalDateTime.now().minusDays(5), LocalDateTime.now().plusDays(25));
+        LocalDateTime oldEnd = current.getEndDate();
+        Subscription queued = period(oldEnd, oldEnd.plusDays(30));
+        when(subscriptionRepository.findAllByOrganisationIdAndStatusOrderByEndDateAsc(orgId, SubscriptionStatus.ACTIVE))
+                .thenReturn(Flux.just(current, queued));
+
+        LocalDateTime newEnd = oldEnd.plusDays(10);
+        StepVerifier.create(service.adminChangeSubscription(orgId, SubscriptionType.MONTHLY, newEnd, 5L, "Goodwill"))
+                .assertNext(s -> {
+                    assertThat(s.getId()).isEqualTo(current.getId());
+                    assertThat(s.getEndDate()).isEqualTo(newEnd);
+                    assertThat(s.getAdminReason()).isEqualTo("Goodwill");
+                })
+                .verifyComplete();
+        assertThat(queued.getStartDate()).isEqualTo(newEnd);
+        assertThat(queued.getEndDate()).isEqualTo(newEnd.plusDays(30));
+    }
+
+    @Test
+    void adminChange_rejectsPastEndDate() {
+        StepVerifier.create(service.adminChangeSubscription(orgId, SubscriptionType.MONTHLY,
+                        LocalDateTime.now().minusDays(1), 5L, null))
+                .expectError(InvalidRecord.class)
+                .verify();
+    }
+
+    @Test
+    void periodsAreSavedAsNewRows() {
+        Payment payment = payment();
+        when(paymentRepository.findById(payment.getId())).thenReturn(Mono.just(payment));
+
+        StepVerifier.create(service.activateFromPayment(payment)).expectNextCount(1).verifyComplete();
+        ArgumentCaptor<Subscription> saved = ArgumentCaptor.forClass(Subscription.class);
+        verify(subscriptionRepository).save(saved.capture());
+        assertThat(saved.getValue().getOrganisationId()).isEqualTo(orgId);
+        assertThat(saved.getValue().getSubscriptionType()).isEqualTo(SubscriptionType.MONTHLY);
+    }
+
+    private Payment payment() {
         Payment p = new Payment();
         p.setId(UUID.randomUUID());
         p.setOrganisationId(orgId);
-        p.setSubscriptionType(type);
+        p.setSubscriptionType(SubscriptionType.MONTHLY);
+        p.setStatus(PaymentStatus.SUCCESSFUL);
         p.setCreatedBy(1L);
         return p;
     }
 
-    @Test
-    void activateFromPayment_noExistingSubscription_createsNewActiveOneWithMonthlyEndDate() {
-        init();
-        UUID orgId = UUID.randomUUID();
-        Payment payment = payment(orgId, SubscriptionType.MONTHLY);
-
-        when(paymentRepository.findById(payment.getId())).thenReturn(Mono.just(payment));
-        when(subscriptionRepository.findByOrganisationIdAndStatus(orgId, SubscriptionStatus.ACTIVE))
-                .thenReturn(Mono.empty());
-        when(planPriceService.getPrice(SubscriptionType.MONTHLY))
-                .thenReturn(Mono.just(planPrice(SubscriptionType.MONTHLY, "15000", 30)));
-
-        ArgumentCaptor<Subscription> captor = ArgumentCaptor.forClass(Subscription.class);
-        when(subscriptionRepository.save(captor.capture())).thenAnswer(inv -> {
-            Subscription s = inv.getArgument(0);
-            s.setId(UUID.randomUUID());
-            return Mono.just(s);
-        });
-        when(paymentRepository.linkSubscriptionIfAbsent(eq(payment.getId()), any())).thenReturn(Mono.just(1));
-
-        StepVerifier.create(activationService.activateFromPayment(payment))
-                .expectNextMatches(s -> s.getStatus() == SubscriptionStatus.ACTIVE
-                        && s.getSubscriptionType() == SubscriptionType.MONTHLY
-                        && ChronoUnit.DAYS.between(s.getStartDate(), s.getEndDate()) == 30)
-                .verifyComplete();
-
-        verify(subscriptionRepository, times(1)).save(any());
+    private Subscription period(LocalDateTime start, LocalDateTime end) {
+        Subscription s = new Subscription();
+        s.setId(UUID.randomUUID());
+        s.setOrganisationId(orgId);
+        s.setSubscriptionType(SubscriptionType.MONTHLY);
+        s.setStatus(SubscriptionStatus.ACTIVE);
+        s.setStartDate(start);
+        s.setEndDate(end);
+        return s;
     }
 
-    @Test
-    void activateFromPayment_noExistingSubscription_annualCycleAdds365Days() {
-        init();
-        UUID orgId = UUID.randomUUID();
-        Payment payment = payment(orgId, SubscriptionType.ANNUAL);
-
-        when(paymentRepository.findById(payment.getId())).thenReturn(Mono.just(payment));
-        when(subscriptionRepository.findByOrganisationIdAndStatus(orgId, SubscriptionStatus.ACTIVE))
-                .thenReturn(Mono.empty());
-        when(planPriceService.getPrice(SubscriptionType.ANNUAL))
-                .thenReturn(Mono.just(planPrice(SubscriptionType.ANNUAL, "150000", 365)));
-        when(subscriptionRepository.save(any())).thenAnswer(inv -> {
-            Subscription s = inv.getArgument(0);
-            s.setId(UUID.randomUUID());
-            return Mono.just(s);
-        });
-        when(paymentRepository.linkSubscriptionIfAbsent(eq(payment.getId()), any())).thenReturn(Mono.just(1));
-
-        StepVerifier.create(activationService.activateFromPayment(payment))
-                .expectNextMatches(s -> s.getEndDate().equals(s.getStartDate().plusDays(365)))
-                .verifyComplete();
-    }
-
-    @Test
-    void activateFromPayment_existingActiveSubscriptionSamePlan_extendsEndDateInsteadOfCreating() {
-        init();
-        UUID orgId = UUID.randomUUID();
-        Payment payment = payment(orgId, SubscriptionType.MONTHLY);
-
-        Subscription existing = new Subscription();
-        existing.setId(UUID.randomUUID());
-        existing.setOrganisationId(orgId);
-        existing.setSubscriptionType(SubscriptionType.MONTHLY);
-        existing.setStatus(SubscriptionStatus.ACTIVE);
-        LocalDateTime currentEnd = LocalDateTime.now().plusDays(10);
-        existing.setEndDate(currentEnd);
-
-        when(paymentRepository.findById(payment.getId())).thenReturn(Mono.just(payment));
-        when(subscriptionRepository.findByOrganisationIdAndStatus(orgId, SubscriptionStatus.ACTIVE))
-                .thenReturn(Mono.just(existing));
-        when(planPriceService.getPrice(SubscriptionType.MONTHLY))
-                .thenReturn(Mono.just(planPrice(SubscriptionType.MONTHLY, "15000", 30)));
-        when(subscriptionRepository.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
-        when(paymentRepository.linkSubscriptionIfAbsent(eq(payment.getId()), eq(existing.getId())))
-                .thenReturn(Mono.just(1));
-
-        StepVerifier.create(activationService.activateFromPayment(payment))
-                .expectNextMatches(s -> s.getId().equals(existing.getId())
-                        && s.getEndDate().equals(currentEnd.plusDays(30)))
-                .verifyComplete();
-
-        verify(subscriptionRepository, never()).findById(any(UUID.class));
-    }
-
-    @Test
-    void activateFromPayment_alreadyLinkedPayment_isIdempotentAndDoesNotSaveAgain() {
-        init();
-        UUID orgId = UUID.randomUUID();
-        UUID subscriptionId = UUID.randomUUID();
-        Payment payment = payment(orgId, SubscriptionType.MONTHLY);
-        payment.setSubscriptionId(subscriptionId);
-
-        Subscription existing = new Subscription();
-        existing.setId(subscriptionId);
-        existing.setStatus(SubscriptionStatus.ACTIVE);
-
-        when(paymentRepository.findById(payment.getId())).thenReturn(Mono.just(payment));
-        when(subscriptionRepository.findById(subscriptionId)).thenReturn(Mono.just(existing));
-
-        // Call twice — as a duplicate webhook delivery would.
-        StepVerifier.create(activationService.activateFromPayment(payment))
-                .expectNextMatches(s -> s.getId().equals(subscriptionId))
-                .verifyComplete();
-        StepVerifier.create(activationService.activateFromPayment(payment))
-                .expectNextMatches(s -> s.getId().equals(subscriptionId))
-                .verifyComplete();
-
-        verify(subscriptionRepository, never()).save(any());
-        verify(paymentRepository, never()).linkSubscriptionIfAbsent(any(), any());
-    }
-
-    @Test
-    void activateFromPayment_concurrentLinkLoses_returnsWhicheverSubscriptionWon() {
-        init();
-        UUID orgId = UUID.randomUUID();
-        Payment payment = payment(orgId, SubscriptionType.MONTHLY);
-
-        when(paymentRepository.findById(payment.getId())).thenReturn(Mono.just(payment));
-        when(subscriptionRepository.findByOrganisationIdAndStatus(orgId, SubscriptionStatus.ACTIVE))
-                .thenReturn(Mono.empty());
-        when(planPriceService.getPrice(SubscriptionType.MONTHLY))
-                .thenReturn(Mono.just(planPrice(SubscriptionType.MONTHLY, "15000", 30)));
-        when(subscriptionRepository.save(any())).thenAnswer(inv -> {
-            Subscription s = inv.getArgument(0);
-            s.setId(UUID.randomUUID());
-            return Mono.just(s);
-        });
-        // Lost the race: 0 rows updated.
-        when(paymentRepository.linkSubscriptionIfAbsent(eq(payment.getId()), any())).thenReturn(Mono.just(0));
-
-        UUID winnerSubId = UUID.randomUUID();
-        Payment relinkedPayment = payment(orgId, SubscriptionType.MONTHLY);
-        relinkedPayment.setId(payment.getId());
-        relinkedPayment.setSubscriptionId(winnerSubId);
-        Subscription winner = new Subscription();
-        winner.setId(winnerSubId);
-
-        when(paymentRepository.findById(payment.getId()))
-                .thenReturn(Mono.just(payment), Mono.just(relinkedPayment));
-        when(subscriptionRepository.findById(winnerSubId)).thenReturn(Mono.just(winner));
-
-        StepVerifier.create(activationService.activateFromPayment(payment))
-                .expectNextMatches(s -> s.getId().equals(winnerSubId))
-                .verifyComplete();
-    }
-
-    // ──────────────────────────── adminChangeSubscription ────────────────────────────
-
-    @Test
-    void adminChangeSubscription_noActiveSubscription_insertsFirstActiveRow() {
-        init();
-        UUID orgId = UUID.randomUUID();
-        when(subscriptionRepository.findByOrganisationIdAndStatus(orgId, SubscriptionStatus.ACTIVE))
-                .thenReturn(Mono.empty());
-        when(planPriceService.getPrice(SubscriptionType.ANNUAL))
-                .thenReturn(Mono.just(planPrice(SubscriptionType.ANNUAL, "150000", 365)));
-        when(subscriptionRepository.save(any())).thenAnswer(inv -> {
-            Subscription s = inv.getArgument(0);
-            s.setId(UUID.randomUUID());
-            return Mono.just(s);
-        });
-
-        StepVerifier.create(activationService.adminChangeSubscription(orgId, SubscriptionType.ANNUAL, null, 42L))
-                .expectNextMatches(s -> s.getStatus() == SubscriptionStatus.ACTIVE
-                        && s.getSubscriptionType() == SubscriptionType.ANNUAL
-                        && s.getCreatedBy().equals(42L)
-                        && ChronoUnit.DAYS.between(s.getStartDate(), s.getEndDate()) == 365)
-                .verifyComplete();
-
-        verify(subscriptionRepository, times(1)).save(any());
-    }
-
-    @Test
-    void adminChangeSubscription_existingActiveSubscription_updatesInPlaceRatherThanInserting() {
-        init();
-        UUID orgId = UUID.randomUUID();
-        Subscription existing = new Subscription();
-        existing.setId(UUID.randomUUID());
-        existing.setOrganisationId(orgId);
-        existing.setSubscriptionType(SubscriptionType.MONTHLY);
-        existing.setStatus(SubscriptionStatus.ACTIVE);
-        existing.setStartDate(LocalDateTime.now().minusDays(5));
-        existing.setEndDate(LocalDateTime.now().plusDays(25));
-
-        when(subscriptionRepository.findByOrganisationIdAndStatus(orgId, SubscriptionStatus.ACTIVE))
-                .thenReturn(Mono.just(existing));
-        when(subscriptionRepository.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
-        LocalDateTime explicitEndDate = LocalDateTime.now().plusDays(180);
-
-        StepVerifier.create(activationService.adminChangeSubscription(orgId, SubscriptionType.SIX_MONTHS, explicitEndDate, 42L))
-                .assertNext(s -> org.assertj.core.api.Assertions.assertThat(s.getId()).isEqualTo(existing.getId()))
-                .verifyComplete();
-
-        ArgumentCaptor<Subscription> captor = ArgumentCaptor.forClass(Subscription.class);
-        verify(subscriptionRepository, times(1)).save(captor.capture());
-        Subscription saved = captor.getValue();
-        org.assertj.core.api.Assertions.assertThat(saved.getId()).isEqualTo(existing.getId());
-        org.assertj.core.api.Assertions.assertThat(saved.getSubscriptionType()).isEqualTo(SubscriptionType.SIX_MONTHS);
-        org.assertj.core.api.Assertions.assertThat(saved.getEndDate()).isEqualTo(explicitEndDate);
-        verify(planPriceService, never()).getPrice(any());
+    private PlanPrice price(int days) {
+        PlanPrice p = new PlanPrice();
+        p.setSubscriptionType(SubscriptionType.MONTHLY);
+        p.setDurationDays(days);
+        return p;
     }
 }

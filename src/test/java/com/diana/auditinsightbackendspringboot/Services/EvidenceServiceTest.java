@@ -42,6 +42,7 @@ class EvidenceServiceTest {
     @Mock private UserRepository userRepo;
     @Mock private SubscriptionRepository subscriptionRepo;
     @Mock private PlatformFreeAccessService platformFreeAccessService;
+    @Mock private com.diana.auditinsightbackendspringboot.Repositories.TrialGrantRepository trialGrantRepo;
     @Mock private TransactionService txnService;
     @Mock private CloudinaryService cloudinaryService;
     @Mock private NotificationService notificationService;
@@ -57,17 +58,18 @@ class EvidenceServiceTest {
 
     @BeforeEach
     void setUp() {
-        OrgAccessService orgAccessService = new OrgAccessService(
-                userRepo, memberRepo, subscriptionRepo, platformFreeAccessService);
+        OrgAccessService orgAccessService = new OrgAccessService(userRepo, memberRepo,
+                new EntitlementService(subscriptionRepo, trialGrantRepo, platformFreeAccessService));
         service = new EvidenceService(evidenceRepo, txnRepo, organisationRepo, orgAccessService,
                 txnService, cloudinaryService, notificationService, signatureRepo, auditTrail,
                 new SigningModeService(new DocumentConversionService("", 90)));
         lenient().when(auditTrail.record(any(), any(), any(), any(), any())).thenReturn(Mono.empty());
-        lenient().when(platformFreeAccessService.isEnabled()).thenReturn(Mono.just(false));
+        lenient().when(platformFreeAccessService.activeUntil()).thenReturn(Mono.just(java.util.Optional.empty()));
+        lenient().when(trialGrantRepo.findFirstByOrganisationIdAndStatus(any(), any())).thenReturn(Mono.empty());
         lenient().when(organisationRepo.findById(ORG_ID))
                 .thenReturn(Mono.just(organisation(ORG_ID, OrganisationType.PRIVATE)));
-        lenient().when(subscriptionRepo.findFirstByOrganisationIdOrderByCreatedAtDesc(ORG_ID))
-                .thenReturn(Mono.just(activeSubscription(ORG_ID)));
+        lenient().when(subscriptionRepo.findAllByOrganisationIdAndStatusOrderByEndDateAsc(ORG_ID, SubscriptionStatus.ACTIVE))
+                .thenReturn(Flux.just(activeSubscription(ORG_ID)));
     }
 
     // ──────────────────────────── uploadEvidence ──────────────────────────────

@@ -134,18 +134,17 @@ public class AdminOrganisationService {
                 .switchIfEmpty(Mono.error(new InvalidRecord("Organisation not found")))
                 .flatMap(organisation -> userRepository.findByUsername(actingAdminUsername)
                         .switchIfEmpty(Mono.error(new InvalidRecord("Admin user not found")))
-                        .flatMap(admin -> subscriptionRepository
-                                .findByOrganisationIdAndStatus(organisationId, SubscriptionStatus.ACTIVE)
+                        .flatMap(admin -> activationService.currentPeriod(organisationId, java.time.LocalDateTime.now())
                                 .map(this::toSubscriptionSummary)
                                 .map(Optional::of)
                                 .defaultIfEmpty(Optional.empty())
                                 .flatMap(beforeOpt -> activationService.adminChangeSubscription(
-                                                organisationId, request.getSubscriptionType(), request.getEndDate(), admin.getId())
+                                                organisationId, request.getSubscriptionType(), request.getEndDate(), admin.getId(), request.getReason())
                                         .flatMap(after -> {
                                             AdminSubscriptionSummary afterSummary = toSubscriptionSummary(after);
                                             return adminAuditService.record(admin.getId(), "CHANGE_SUBSCRIPTION",
                                                             "ORGANISATION", organisationId.toString(),
-                                                            beforeOpt.orElse(null), afterSummary)
+                                                            beforeOpt.orElse(null), afterSummary, request.getReason())
                                                     .thenReturn(afterSummary);
                                         }))));
     }
