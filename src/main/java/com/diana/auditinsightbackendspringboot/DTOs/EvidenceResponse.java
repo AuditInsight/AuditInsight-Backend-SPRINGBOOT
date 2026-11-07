@@ -20,4 +20,6 @@ public class EvidenceResponse {
     private String notes;
     private Long uploadedBy;
     private LocalDateTime uploadedAt;
+    // How many people have signed this document; 0 means Preview/Download should use the original file.
+    private int signatureCount;
 }

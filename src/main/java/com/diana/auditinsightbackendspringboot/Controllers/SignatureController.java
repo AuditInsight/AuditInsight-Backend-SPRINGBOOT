@@ -77,8 +77,9 @@ public class SignatureController {
     @Operation(summary = "Download a document with its signatures",
             description = "Returns the document as a PDF with a signature page (signature, name, email and time of " +
                     "each signer) added after the original content. PDFs get the page appended, PNG/JPG images are " +
-                    "wrapped into a PDF, and Excel files (which cannot be stamped) return a separate signature " +
-                    "certificate PDF. Fails if nobody has signed yet.")
+                    "wrapped into a PDF, and Word (DOCX) and Excel (XLS/XLSX) files, which cannot be stamped, return " +
+                    "a separate signature certificate PDF (named *-signatures.pdf) instead of the document. " +
+                    "Fails if nobody has signed yet.")
     public Mono<ResponseEntity<byte[]>> downloadSigned(
             Authentication auth,
             @PathVariable UUID evidenceId) {

@@ -24,6 +24,9 @@ import java.awt.Color;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.Base64;
 import java.util.List;
@@ -100,7 +103,15 @@ public class SignedDocumentService {
 
     private Signer toSigner(EvidenceSignature s, String email) {
         return new Signer(s.getSignerName(), s.getSignerTitle(), email, s.getTypedName(), decodeImage(s.getSignatureImage()),
-                s.getSignedAt() == null ? "" : TIME_FORMAT.format(s.getSignedAt()));
+                s.getSignedAt() == null ? "" : TIME_FORMAT.format(toUtc(s.getSignedAt())));
+    }
+
+    /**
+     * signed_at is written with {@code LocalDateTime.now()}, i.e. in the server's own time zone, while the page
+     * labels the time as UTC — convert it so the label is true wherever the server runs.
+     */
+    static LocalDateTime toUtc(LocalDateTime serverLocal) {
+        return serverLocal.atZone(ZoneId.systemDefault()).withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime();
     }
 
     private byte[] decodeImage(String dataUrl) {

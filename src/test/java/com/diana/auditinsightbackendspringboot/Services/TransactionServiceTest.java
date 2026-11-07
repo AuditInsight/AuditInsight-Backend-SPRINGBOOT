@@ -38,6 +38,7 @@ class TransactionServiceTest {
     @Mock private SubscriptionRepository subscriptionRepo;
     @Mock private PlatformFreeAccessService platformFreeAccessService;
     @Mock private NotificationService notificationService;
+    @Mock private EvidenceSignatureRepository signatureRepo;
 
     private TransactionService service;
 
@@ -50,7 +51,7 @@ class TransactionServiceTest {
         OrgAccessService orgAccessService = new OrgAccessService(
                 userRepo, memberRepo, subscriptionRepo, platformFreeAccessService);
         service = new TransactionService(txnRepo, evidenceRepo, reviewRepo, organisationRepo, orgAccessService,
-                userRepo, notificationService);
+                userRepo, notificationService, signatureRepo);
         lenient().when(platformFreeAccessService.isEnabled()).thenReturn(Mono.just(false));
         lenient().when(organisationRepo.findById(ORG_ID))
                 .thenReturn(Mono.just(organisation(ORG_ID, OrganisationType.PRIVATE)));
@@ -214,12 +215,29 @@ class TransactionServiceTest {
 
         Evidence ev = evidence(TXN_ID);
         when(evidenceRepo.findAllByTransactionId(TXN_ID)).thenReturn(Flux.just(ev));
+        when(signatureRepo.findSignedEvidenceIdsByTransactionId(TXN_ID)).thenReturn(Flux.empty());
 
         StepVerifier.create(service.getTransaction(TXN_ID, "client@test.com"))
                 .expectNextMatches(r -> r.getId().equals(TXN_ID)
                         && r.getCreatedBy().equals("Test User")
                         && r.getEvidence() != null
-                        && r.getEvidence().size() == 1)
+                        && r.getEvidence().size() == 1
+                        && r.getEvidence().get(0).getSignatureCount() == 0)
+                .verifyComplete();
+    }
+
+    @Test
+    void getTransaction_signedEvidence_includesSignatureCount() {
+        when(txnRepo.findById(TXN_ID)).thenReturn(Mono.just(txn(TXN_ID)));
+        mockActiveMember("client@test.com", 1L, Role.CLIENT);
+        when(userRepo.findById(1L)).thenReturn(Mono.just(user(1L, "client@test.com", Role.CLIENT)));
+
+        Evidence ev = evidence(TXN_ID);
+        when(evidenceRepo.findAllByTransactionId(TXN_ID)).thenReturn(Flux.just(ev));
+        when(signatureRepo.findSignedEvidenceIdsByTransactionId(TXN_ID)).thenReturn(Flux.just(ev.getId(), ev.getId()));
+
+        StepVerifier.create(service.getTransaction(TXN_ID, "client@test.com"))
+                .expectNextMatches(r -> r.getEvidence().get(0).getSignatureCount() == 2)
                 .verifyComplete();
     }
 
