@@ -24,9 +24,29 @@ import java.util.UUID;
 public class AdminOrganisationController {
 
     private final AdminOrganisationService adminOrganisationService;
+    private final OrganisationFreeAccessService freeAccessService;
 
-    public AdminOrganisationController(AdminOrganisationService adminOrganisationService) {
+    public AdminOrganisationController(AdminOrganisationService adminOrganisationService,
+                                       OrganisationFreeAccessService freeAccessService) {
         this.adminOrganisationService = adminOrganisationService;
+        this.freeAccessService = freeAccessService;
+    }
+
+    @GetMapping("/{organisationId}/access")
+    @Operation(summary = "Organisation access", description = "Why the organisation can (or cannot) use its workspace, "
+            + "plus any free access (trial, or periods no payment bought) that a Super Admin can end.")
+    public Mono<OrganisationFreeAccessService.AdminAccessView> access(@PathVariable UUID organisationId) {
+        return freeAccessService.view(organisationId);
+    }
+
+    @PostMapping("/{organisationId}/free-access/end")
+    @Operation(summary = "End this organisation's free access", description = "Revokes its trial and ends periods no "
+            + "payment bought, now. Real paid time is kept and starts straight away. A reason is required.")
+    public Mono<OrganisationFreeAccessService.AdminAccessView> endFreeAccess(
+            Authentication authentication,
+            @PathVariable UUID organisationId,
+            @Valid @RequestBody com.diana.auditinsightbackendspringboot.DTOs.TrialRequests.Reason body) {
+        return freeAccessService.endFreeAccess(organisationId, body.reason(), authentication.getName());
     }
 
     @GetMapping

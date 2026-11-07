@@ -34,7 +34,7 @@ public class AccessStatusService {
                 .map(t -> toResponse(t.getT1(), t.getT2().getRequestedSubscriptionType()));
     }
 
-    static AccessResponse toResponse(EntitlementService.Entitlement e,
+    public static AccessResponse toResponse(EntitlementService.Entitlement e,
                                      SubscriptionType requestedPlan) {
         LocalDateTime now = LocalDateTime.now();
         return new AccessResponse(e.hasAccess(), e.basis(), e.accessUntil(), period(e.currentPaid()), period(e.nextPaid()),
