@@ -14,8 +14,11 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.time.LocalDateTime;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Service
 public class EvidenceService {
@@ -29,6 +32,7 @@ public class EvidenceService {
     private final TransactionService txnService;
     private final CloudinaryService cloudinaryService;
     private final NotificationService notificationService;
+    private final EvidenceSignatureRepository signatureRepo;
 
     public EvidenceService(EvidenceRepository evidenceRepo,
                            TransactionRepository txnRepo,
@@ -36,7 +40,8 @@ public class EvidenceService {
                            OrgAccessService orgAccessService,
                            TransactionService txnService,
                            CloudinaryService cloudinaryService,
-                           NotificationService notificationService) {
+                           NotificationService notificationService,
+                           EvidenceSignatureRepository signatureRepo) {
         this.evidenceRepo = evidenceRepo;
         this.txnRepo = txnRepo;
         this.organisationRepo = organisationRepo;
@@ -44,6 +49,7 @@ public class EvidenceService {
         this.txnService = txnService;
         this.cloudinaryService = cloudinaryService;
         this.notificationService = notificationService;
+        this.signatureRepo = signatureRepo;
     }
 
 
@@ -83,6 +89,10 @@ public class EvidenceService {
 
 
     private EvidenceResponse toResponse(Evidence e) {
+        return toResponse(e, 0);
+    }
+
+    private EvidenceResponse toResponse(Evidence e, long signatureCount) {
         EvidenceResponse r = new EvidenceResponse();
         r.setId(e.getId());
         r.setOrganisationId(e.getOrganisationId());
@@ -95,7 +105,13 @@ public class EvidenceService {
         r.setNotes(e.getNotes());
         r.setUploadedBy(e.getUploadedBy());
         r.setUploadedAt(e.getUploadedAt());
+        r.setSignatureCount((int) signatureCount);
         return r;
+    }
+
+    /** Signatures per evidence id, built from one row per signature. */
+    private static Mono<Map<UUID, Long>> countPerEvidence(Flux<UUID> signedEvidenceIds) {
+        return signedEvidenceIds.collect(Collectors.groupingBy(Function.identity(), Collectors.counting()));
     }
 
 
@@ -178,8 +194,9 @@ public class EvidenceService {
 
     public Flux<EvidenceResponse> listByOrg(UUID orgId, String email) {
         return assertCanView(orgId, email)
-                .thenMany(evidenceRepo.findAllByOrganisationId(orgId))
-                .map(this::toResponse);
+                .then(Mono.defer(() -> countPerEvidence(signatureRepo.findSignedEvidenceIdsByOrganisationId(orgId))))
+                .flatMapMany(counts -> evidenceRepo.findAllByOrganisationId(orgId)
+                        .map(e -> toResponse(e, counts.getOrDefault(e.getId(), 0L))));
     }
 
 
@@ -187,7 +204,9 @@ public class EvidenceService {
         return evidenceRepo.findById(evidenceId)
                 .switchIfEmpty(Mono.error(new InvalidRecord("Evidence not found")))
                 .flatMap(ev -> assertCanView(ev.getOrganisationId(), email)
-                        .thenReturn(toResponse(ev)));
+                        .then(Mono.defer(() -> signatureRepo.countByEvidenceId(evidenceId)))
+                        .defaultIfEmpty(0L)
+                        .map(count -> toResponse(ev, count)));
     }
 
 
@@ -195,7 +214,8 @@ public class EvidenceService {
         return txnRepo.findById(txnId)
                 .switchIfEmpty(Mono.error(new InvalidRecord("Transaction not found")))
                 .flatMapMany(txn -> assertCanView(txn.getOrganisationId(), email)
-                        .thenMany(evidenceRepo.findAllByTransactionId(txnId))
-                        .map(this::toResponse));
+                        .then(Mono.defer(() -> countPerEvidence(signatureRepo.findSignedEvidenceIdsByTransactionId(txnId))))
+                        .flatMapMany(counts -> evidenceRepo.findAllByTransactionId(txnId)
+                                .map(e -> toResponse(e, counts.getOrDefault(e.getId(), 0L)))));
     }
 }

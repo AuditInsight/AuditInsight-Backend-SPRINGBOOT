@@ -13,6 +13,8 @@ import reactor.core.publisher.Mono;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Service
 public class TransactionService {
@@ -24,6 +26,7 @@ public class TransactionService {
     private final OrgAccessService orgAccessService;
     private final UserRepository userRepo;
     private final NotificationService notificationService;
+    private final EvidenceSignatureRepository signatureRepo;
 
     public TransactionService(TransactionRepository txnRepo,
                               EvidenceRepository evidenceRepo,
@@ -31,7 +34,8 @@ public class TransactionService {
                               OrganisationRepository organisationRepo,
                               OrgAccessService orgAccessService,
                               UserRepository userRepo,
-                              NotificationService notificationService) {
+                              NotificationService notificationService,
+                              EvidenceSignatureRepository signatureRepo) {
         this.txnRepo = txnRepo;
         this.evidenceRepo = evidenceRepo;
         this.reviewRepo = reviewRepo;
@@ -39,6 +43,7 @@ public class TransactionService {
         this.orgAccessService = orgAccessService;
         this.userRepo = userRepo;
         this.notificationService = notificationService;
+        this.signatureRepo = signatureRepo;
     }
 
 
@@ -140,7 +145,9 @@ public class TransactionService {
                 .switchIfEmpty(Mono.error(new InvalidRecord("Transaction not found")))
                 .flatMap(t -> resolveContext(t.getOrganisationId(), email)
                         .then(resolveCreatorName(t.getCreatedBy()))
-                        .flatMap(creatorName -> evidenceRepo.findAllByTransactionId(txnId)
+                        .flatMap(creatorName -> signatureRepo.findSignedEvidenceIdsByTransactionId(txnId)
+                                .collect(Collectors.groupingBy(Function.identity(), Collectors.counting()))
+                                .flatMap(signatureCounts -> evidenceRepo.findAllByTransactionId(txnId)
                                 .map(e -> {
                                     EvidenceResponse er = new EvidenceResponse();
                                     er.setId(e.getId());
@@ -154,6 +161,7 @@ public class TransactionService {
                                     er.setNotes(e.getNotes());
                                     er.setUploadedBy(e.getUploadedBy());
                                     er.setUploadedAt(e.getUploadedAt());
+                                    er.setSignatureCount(signatureCounts.getOrDefault(e.getId(), 0L).intValue());
                                     return er;
                                 })
                                 .collectList()
@@ -161,7 +169,7 @@ public class TransactionService {
                                     TransactionResponse r = toResponse(t, creatorName);
                                     r.setEvidence(evidenceList);
                                     return r;
-                                })));
+                                }))));
     }
 
 
