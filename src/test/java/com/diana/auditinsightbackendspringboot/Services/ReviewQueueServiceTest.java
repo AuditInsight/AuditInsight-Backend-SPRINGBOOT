@@ -35,6 +35,7 @@ class ReviewQueueServiceTest {
     @Mock private UserRepository userRepo;
     @Mock private SubscriptionRepository subscriptionRepo;
     @Mock private PlatformFreeAccessService platformFreeAccessService;
+    @Mock private com.diana.auditinsightbackendspringboot.Repositories.TrialGrantRepository trialGrantRepo;
     @Mock private NotificationService notificationService;
 
     private ReviewQueueService service;
@@ -46,12 +47,13 @@ class ReviewQueueServiceTest {
 
     @BeforeEach
     void setUp() {
-        OrgAccessService orgAccessService = new OrgAccessService(
-                userRepo, memberRepo, subscriptionRepo, platformFreeAccessService);
+        OrgAccessService orgAccessService = new OrgAccessService(userRepo, memberRepo,
+                new EntitlementService(subscriptionRepo, trialGrantRepo, platformFreeAccessService));
         service = new ReviewQueueService(reviewRepo, txnRepo, orgAccessService, notificationService);
-        lenient().when(platformFreeAccessService.isEnabled()).thenReturn(Mono.just(false));
-        lenient().when(subscriptionRepo.findFirstByOrganisationIdOrderByCreatedAtDesc(ORG_ID))
-                .thenReturn(Mono.just(activeSubscription(ORG_ID)));
+        lenient().when(platformFreeAccessService.activeUntil()).thenReturn(Mono.just(java.util.Optional.empty()));
+        lenient().when(trialGrantRepo.findFirstByOrganisationIdAndStatus(any(), any())).thenReturn(Mono.empty());
+        lenient().when(subscriptionRepo.findAllByOrganisationIdAndStatusOrderByEndDateAsc(ORG_ID, SubscriptionStatus.ACTIVE))
+                .thenReturn(Flux.just(activeSubscription(ORG_ID)));
     }
 
     // ──────────────────────────── flagIssue ──────────────────────────────────

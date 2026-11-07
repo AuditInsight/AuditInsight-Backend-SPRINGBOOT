@@ -208,4 +208,36 @@ class AdminEndpointsSecurityTest {
         assertForbiddenForNonAdmins(token -> get(token, "/api/admin/audit-log"));
         get(adminToken, "/api/admin/audit-log").expectStatus().isOk();
     }
+
+    private WebTestClient.ResponseSpec post(String token, String path, Object body) {
+        return webTestClient.post().uri(path).header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(body).exchange();
+    }
+
+    @Test
+    void trials_onlyAdminCanGrantChangeOrRevoke() {
+        String base = "/api/admin/organisations/" + organisationId + "/trials";
+        Map<String, Object> grant = Map.of("days", 14, "reason", "Pilot");
+        Map<String, Object> change = Map.of("newEndsAt", java.time.LocalDateTime.now().plusDays(20).withNano(0).toString(),
+                "reason", "Extend");
+        Map<String, Object> reason = Map.of("reason", "Stop");
+
+        assertForbiddenForNonAdmins(token -> post(token, base, grant));
+        assertForbiddenForNonAdmins(token -> patch(token, base + "/current", change));
+        assertForbiddenForNonAdmins(token -> post(token, base + "/current/revoke", reason));
+        assertForbiddenForNonAdmins(token -> get(token, base));
+
+        post(adminToken, base, grant).expectStatus().isCreated();
+        patch(adminToken, base + "/current", change).expectStatus().isOk();
+        get(adminToken, base).expectStatus().isOk();
+        post(adminToken, base + "/current/revoke", reason).expectStatus().isOk();
+    }
+
+    @Test
+    void trialCampaigns_onlyAdminAllowed() {
+        Map<String, Object> body = Map.of("name", "Launch", "durationDays", 30, "reason", "Launch month");
+        assertForbiddenForNonAdmins(token -> get(token, "/api/admin/trial-campaigns"));
+        assertForbiddenForNonAdmins(token -> post(token, "/api/admin/trial-campaigns", body));
+        get(adminToken, "/api/admin/trial-campaigns").expectStatus().isOk();
+    }
 }

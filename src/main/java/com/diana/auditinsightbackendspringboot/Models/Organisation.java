@@ -2,6 +2,7 @@ package com.diana.auditinsightbackendspringboot.Models;
 
 import com.diana.auditinsightbackendspringboot.Enum.CountryCode;
 import com.diana.auditinsightbackendspringboot.Enum.OrganisationType;
+import com.diana.auditinsightbackendspringboot.Enum.SubscriptionType;
 import lombok.Getter;
 import lombok.Setter;
 import org.springframework.data.annotation.Id;
@@ -43,4 +44,8 @@ public class Organisation {
 
     @Column("created_at")
     private LocalDateTime createdAt;
+
+    // The plan chosen during onboarding, kept so payment can be completed later without choosing again.
+    @Column("requested_subscription_type")
+    private SubscriptionType requestedSubscriptionType;
 }

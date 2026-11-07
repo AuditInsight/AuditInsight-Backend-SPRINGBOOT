@@ -4,6 +4,7 @@ import com.diana.auditinsightbackendspringboot.DTOs.*;
 import com.diana.auditinsightbackendspringboot.Exceptions.Custom.ForbiddenException;
 import com.diana.auditinsightbackendspringboot.Models.Payment;
 import com.diana.auditinsightbackendspringboot.Models.Subscription;
+import com.diana.auditinsightbackendspringboot.Services.AccessStatusService;
 import com.diana.auditinsightbackendspringboot.Services.PaymentService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
@@ -26,9 +27,22 @@ import java.util.UUID;
 public class SubscriptionController {
 
     private final PaymentService paymentService;
+    private final AccessStatusService accessStatusService;
 
-    public SubscriptionController(PaymentService paymentService) {
+    public SubscriptionController(PaymentService paymentService, AccessStatusService accessStatusService) {
         this.paymentService = paymentService;
+        this.accessStatusService = accessStatusService;
+    }
+
+    @GetMapping("/{organisationId}/access")
+    @SecurityRequirement(name = "bearerAuth")
+    @Operation(summary = "Workspace access",
+               description = "Whether the organisation can use its workspace now and why: a current paid period, a "
+                       + "Super Admin-authorised trial, or the emergency override — otherwise payment is required. "
+                       + "Also returns any paid period scheduled to start after a trial, the trial's dates, and the "
+                       + "plan chosen during onboarding. Any active member may call it.")
+    public Mono<AccessResponse> getAccess(Authentication auth, @PathVariable UUID organisationId) {
+        return accessStatusService.forMember(organisationId, auth.getName());
     }
 
     @PostMapping("/{organisationId}/checkout/momo")

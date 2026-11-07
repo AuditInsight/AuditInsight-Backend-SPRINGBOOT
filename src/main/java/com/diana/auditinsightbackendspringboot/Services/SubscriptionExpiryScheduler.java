@@ -3,12 +3,14 @@ package com.diana.auditinsightbackendspringboot.Services;
 import com.diana.auditinsightbackendspringboot.Enum.MemberStatus;
 import com.diana.auditinsightbackendspringboot.Enum.Role;
 import com.diana.auditinsightbackendspringboot.Enum.SubscriptionStatus;
+import com.diana.auditinsightbackendspringboot.Enum.TrialGrantStatus;
 import com.diana.auditinsightbackendspringboot.Models.Organisation;
 import com.diana.auditinsightbackendspringboot.Models.Subscription;
 import com.diana.auditinsightbackendspringboot.Models.User;
 import com.diana.auditinsightbackendspringboot.Repositories.OrganisationMemberRepository;
 import com.diana.auditinsightbackendspringboot.Repositories.OrganisationRepository;
 import com.diana.auditinsightbackendspringboot.Repositories.SubscriptionRepository;
+import com.diana.auditinsightbackendspringboot.Repositories.TrialGrantRepository;
 import com.diana.auditinsightbackendspringboot.Repositories.UserRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -34,23 +36,27 @@ public class SubscriptionExpiryScheduler {
     private final OrganisationMemberRepository memberRepo;
     private final UserRepository userRepo;
     private final EmailService emailService;
+    private final TrialGrantRepository trialGrantRepo;
 
     public SubscriptionExpiryScheduler(SubscriptionRepository subscriptionRepo,
                                         OrganisationRepository organisationRepo,
                                         OrganisationMemberRepository memberRepo,
                                         UserRepository userRepo,
-                                        EmailService emailService) {
+                                        EmailService emailService,
+                                        TrialGrantRepository trialGrantRepo) {
         this.subscriptionRepo = subscriptionRepo;
         this.organisationRepo = organisationRepo;
         this.memberRepo = memberRepo;
         this.userRepo = userRepo;
         this.emailService = emailService;
+        this.trialGrantRepo = trialGrantRepo;
     }
 
     @Scheduled(fixedRate = 3_600_000) // every hour
     public void processSubscriptionLifecycle() {
         flipExpiredSubscriptions();
         sendExpiryReminders();
+        sendTrialGrantReminders();
     }
 
     /** Housekeeping — access gating itself checks dates live, this just keeps the status column truthful. */
@@ -66,17 +72,44 @@ public class SubscriptionExpiryScheduler {
                 .subscribe();
     }
 
+    /**
+     * "Subscription ending" reminders for paid periods only. Old automatic TRIAL subscription rows never gave access,
+     * so they no longer get "your trial is ending" emails; real trials are reminded from their grants instead
+     * ({@link #sendTrialGrantReminders}). A period followed straight away by another paid period isn't really
+     * ending, so it gets no reminder.
+     */
     private void sendExpiryReminders() {
         LocalDateTime now = LocalDateTime.now();
         LocalDateTime windowStart = now.plusDays(7);
         LocalDateTime windowEnd = windowStart.plusHours(1);
 
-        subscriptionRepo.findByStatusInAndEndDateBetween(
-                        List.of(SubscriptionStatus.TRIAL, SubscriptionStatus.ACTIVE), windowStart, windowEnd)
-                .filter(sub -> sub.getStatus() == SubscriptionStatus.TRIAL
-                        ? !sub.isTrialReminderSent() : !sub.isExpiryReminderSent())
+        subscriptionRepo.findByStatusInAndEndDateBetween(List.of(SubscriptionStatus.ACTIVE), windowStart, windowEnd)
+                .filter(sub -> !sub.isExpiryReminderSent())
+                .filterWhen(sub -> subscriptionRepo.findAllByOrganisationIdAndStatusOrderByEndDateAsc(
+                                sub.getOrganisationId(), SubscriptionStatus.ACTIVE)
+                        .any(next -> next.getStartDate() != null && !next.getStartDate().isAfter(sub.getEndDate())
+                                && next.getEndDate().isAfter(sub.getEndDate()))
+                        .map(continues -> !continues))
                 .flatMap(this::sendReminderAndMarkSent)
                 .doOnError(e -> log.error("Failed to send expiry reminder: {}", e.getMessage()))
+                .subscribe();
+    }
+
+    /** One "trial ending soon" email per Super Admin-authorised trial, three days before it ends. */
+    private void sendTrialGrantReminders() {
+        LocalDateTime now = LocalDateTime.now();
+        trialGrantRepo.findAllByStatusAndEndsAtBetween(TrialGrantStatus.ACTIVE, now, now.plusDays(3))
+                .filter(grant -> !grant.isReminderSent())
+                .flatMap(grant -> resolveOwnerEmail(grant.getOrganisationId())
+                        .flatMap(tuple -> {
+                            long daysRemaining = Math.max(1, Duration.between(now, grant.getEndsAt()).toDays() + 1);
+                            emailService.sendTrialExpiringReminderEmail(tuple.getT1(), tuple.getT2().getName(),
+                                    daysRemaining, grant.getEndsAt().format(DISPLAY_DATE));
+                            grant.setReminderSent(true);
+                            grant.setUpdatedAt(now);
+                            return trialGrantRepo.save(grant).then();
+                        }))
+                .doOnError(e -> log.error("Failed to send trial reminder: {}", e.getMessage()))
                 .subscribe();
     }
 
@@ -88,14 +121,10 @@ public class SubscriptionExpiryScheduler {
                     long daysRemaining = Duration.between(LocalDateTime.now(), sub.getEndDate()).toDays() + 1;
                     String expiryDate = sub.getEndDate().format(DISPLAY_DATE);
 
-                    if (sub.getStatus() == SubscriptionStatus.TRIAL) {
-                        emailService.sendTrialExpiringReminderEmail(ownerEmail, org.getName(), daysRemaining, expiryDate);
-                        sub.setTrialReminderSent(true);
-                    } else {
-                        emailService.sendSubscriptionExpiringReminderEmail(
-                                ownerEmail, org.getName(), sub.getSubscriptionType().name(), daysRemaining, expiryDate);
-                        sub.setExpiryReminderSent(true);
-                    }
+                    String plan = sub.getSubscriptionType() == null ? "current" : sub.getSubscriptionType().name();
+                    emailService.sendSubscriptionExpiringReminderEmail(
+                            ownerEmail, org.getName(), plan, daysRemaining, expiryDate);
+                    sub.setExpiryReminderSent(true);
                     sub.setUpdatedAt(LocalDateTime.now());
                     return subscriptionRepo.save(sub).then();
                 });

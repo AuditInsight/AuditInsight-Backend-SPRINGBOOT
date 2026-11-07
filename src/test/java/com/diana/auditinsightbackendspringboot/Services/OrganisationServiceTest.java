@@ -34,7 +34,7 @@ class OrganisationServiceTest {
     @Mock private OrganisationMemberRepository memberRepo;
     @Mock private OrganisationCurrencyRepository currencyRepo;
     @Mock private OrganisationInvitationRepository invitationRepo;
-    @Mock private SubscriptionRepository subscriptionRepo;
+    @Mock private TrialCampaignService trialCampaignService;
     @Mock private UserRepository userRepo;
     @Mock private ClientRepository clientRepo;
     @Mock private AuditorRepository auditorRepo;
@@ -50,7 +50,7 @@ class OrganisationServiceTest {
     @BeforeEach
     void setUp() {
         service = new OrganisationService(
-                orgRepo, memberRepo, currencyRepo, invitationRepo, subscriptionRepo,
+                orgRepo, memberRepo, currencyRepo, invitationRepo, trialCampaignService,
                 userRepo, clientRepo, auditorRepo, emailService, encoder);
     }
 
@@ -69,7 +69,7 @@ class OrganisationServiceTest {
         when(memberRepo.save(any())).thenReturn(Mono.just(new OrganisationMember()));
         when(currencyRepo.save(any())).thenReturn(Mono.just(new OrganisationCurrency()));
         when(currencyRepo.findAllByOrganisationId(ORG_ID)).thenReturn(Flux.just(currency(ORG_ID, "USD")));
-        when(subscriptionRepo.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
+        when(trialCampaignService.grantOnRegistration(any())).thenReturn(Mono.empty());
 
         CreateOrganisationRequest req = new CreateOrganisationRequest();
         req.setName("Acme");

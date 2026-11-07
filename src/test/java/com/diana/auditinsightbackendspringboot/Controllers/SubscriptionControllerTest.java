@@ -2,6 +2,7 @@ package com.diana.auditinsightbackendspringboot.Controllers;
 
 import com.diana.auditinsightbackendspringboot.Exceptions.Custom.ForbiddenException;
 import com.diana.auditinsightbackendspringboot.Exceptions.Global.GlobalExceptionHandler;
+import com.diana.auditinsightbackendspringboot.Services.AccessStatusService;
 import com.diana.auditinsightbackendspringboot.Services.PaymentService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -30,12 +31,15 @@ class SubscriptionControllerTest {
     @Mock
     private PaymentService paymentService;
 
+    @Mock
+    private AccessStatusService accessStatusService;
+
     private WebTestClient webTestClient;
 
     @BeforeEach
     void setUp() {
         webTestClient = WebTestClient
-                .bindToController(new SubscriptionController(paymentService))
+                .bindToController(new SubscriptionController(paymentService, accessStatusService))
                 .controllerAdvice(new GlobalExceptionHandler())
                 .build();
     }

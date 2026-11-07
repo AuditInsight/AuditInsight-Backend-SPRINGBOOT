@@ -16,6 +16,16 @@ public class PlatformFreeAccessService {
         this.settingsRepository = settingsRepository;
     }
 
+    /** When the emergency override ends, if it is active now. */
+    public Mono<java.util.Optional<LocalDateTime>> activeUntil() {
+        LocalDateTime now = LocalDateTime.now();
+        return settingsRepository.findById(PlatformAccessSettings.GLOBAL_ID)
+                .map(settings -> settings.getFreeAccessEndsAt() != null && settings.getFreeAccessEndsAt().isAfter(now)
+                        ? java.util.Optional.of(settings.getFreeAccessEndsAt())
+                        : java.util.Optional.<LocalDateTime>empty())
+                .defaultIfEmpty(java.util.Optional.empty());
+    }
+
     public Mono<Boolean> isEnabled() {
         return settingsRepository.findById(PlatformAccessSettings.GLOBAL_ID)
                 .map(settings -> settings.getFreeAccessEndsAt() != null
