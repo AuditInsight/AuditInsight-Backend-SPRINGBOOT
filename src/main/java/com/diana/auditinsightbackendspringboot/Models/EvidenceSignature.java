@@ -44,4 +44,8 @@ public class EvidenceSignature {
 
     @Column("request_id")
     private UUID requestId;
+
+    // The stored signed version this signature first appeared in; null for signatures made before versioning.
+    @Column("document_version_id")
+    private UUID documentVersionId;
 }

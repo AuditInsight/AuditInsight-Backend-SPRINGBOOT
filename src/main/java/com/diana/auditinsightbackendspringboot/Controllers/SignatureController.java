@@ -6,7 +6,7 @@ import com.diana.auditinsightbackendspringboot.DTOs.SignEvidenceRequest;
 import com.diana.auditinsightbackendspringboot.DTOs.SignatureRequestResponse;
 import com.diana.auditinsightbackendspringboot.DTOs.SignatureResponse;
 import com.diana.auditinsightbackendspringboot.Services.SignatureService;
-import com.diana.auditinsightbackendspringboot.Services.SignedDocumentService;
+import com.diana.auditinsightbackendspringboot.Services.SignedVersionService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -30,12 +30,15 @@ import java.util.UUID;
 @SecurityRequirement(name = "bearerAuth")
 public class SignatureController {
 
-    private final SignatureService signatureService;
-    private final SignedDocumentService signedDocumentService;
+    static final String HEADER_VERSION = "X-Document-Version";
+    static final String HEADER_SHA256 = "X-Document-SHA256";
 
-    public SignatureController(SignatureService signatureService, SignedDocumentService signedDocumentService) {
+    private final SignatureService signatureService;
+    private final SignedVersionService signedVersionService;
+
+    public SignatureController(SignatureService signatureService, SignedVersionService signedVersionService) {
         this.signatureService = signatureService;
-        this.signedDocumentService = signedDocumentService;
+        this.signedVersionService = signedVersionService;
     }
 
     @PostMapping("/evidence/{evidenceId}/signatures")
@@ -79,16 +82,21 @@ public class SignatureController {
                     "each signer) added after the original content. PDFs get the page appended, PNG/JPG images are " +
                     "wrapped into a PDF, and Word (DOCX) and Excel (XLS/XLSX) files, which cannot be stamped, return " +
                     "a separate signature certificate PDF (named *-signatures.pdf) instead of the document. " +
-                    "Fails if nobody has signed yet.")
+                    "The file is the stored signed version, so Preview and Download return identical bytes; the " +
+                    "X-Document-Version and X-Document-SHA256 headers identify it. Fails if nobody has signed yet.")
     public Mono<ResponseEntity<byte[]>> downloadSigned(
             Authentication auth,
             @PathVariable UUID evidenceId) {
-        return signedDocumentService.build(auth.getName(), evidenceId)
+        return signedVersionService.serve(auth.getName(), evidenceId)
                 .map(doc -> ResponseEntity.ok()
                         .contentType(MediaType.APPLICATION_PDF)
                         .header(HttpHeaders.CONTENT_DISPOSITION,
                                 ContentDisposition.attachment().filename(doc.fileName()).build().toString())
-                        .header(HttpHeaders.ACCESS_CONTROL_EXPOSE_HEADERS, HttpHeaders.CONTENT_DISPOSITION)
+                        .header(HEADER_VERSION, String.valueOf(doc.versionNo()))
+                        .header(HEADER_SHA256, doc.sha256())
+                        .eTag("\"" + doc.sha256() + "\"")
+                        .header(HttpHeaders.ACCESS_CONTROL_EXPOSE_HEADERS, String.join(", ",
+                                HttpHeaders.CONTENT_DISPOSITION, HEADER_VERSION, HEADER_SHA256, HttpHeaders.ETAG))
                         .body(doc.bytes()));
     }
 

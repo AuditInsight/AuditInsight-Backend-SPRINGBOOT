@@ -3,7 +3,6 @@ package com.diana.auditinsightbackendspringboot.Services;
 import com.diana.auditinsightbackendspringboot.Exceptions.Custom.InvalidRecord;
 import com.diana.auditinsightbackendspringboot.Models.Evidence;
 import com.diana.auditinsightbackendspringboot.Models.EvidenceSignature;
-import com.diana.auditinsightbackendspringboot.Repositories.EvidenceRepository;
 import com.diana.auditinsightbackendspringboot.Repositories.EvidenceSignatureRepository;
 import com.diana.auditinsightbackendspringboot.Repositories.UserRepository;
 import lombok.extern.slf4j.Slf4j;
@@ -46,7 +45,8 @@ import java.util.UUID;
 @Slf4j
 public class SignedDocumentService {
 
-    public record SignedDocument(byte[] bytes, String fileName, String contentType) {}
+    /** A freshly rendered signed document; {@code signatureCount} is how many signatures it contains. */
+    public record SignedDocument(byte[] bytes, String fileName, String contentType, int signatureCount) {}
 
     private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm 'UTC'");
     private static final String PNG_DATA_URL_PREFIX = "data:image/png;base64,";
@@ -57,39 +57,34 @@ public class SignedDocumentService {
     private static final float GAP_BELOW_CONTENT = 18f;
     private static final float INLINE_HEADER_HEIGHT = 34f;
 
-    private final EvidenceRepository evidenceRepo;
     private final EvidenceSignatureRepository signatureRepo;
     private final UserRepository userRepo;
-    private final OrgAccessService orgAccessService;
     private final CloudinaryService cloudinaryService;
 
-    public SignedDocumentService(EvidenceRepository evidenceRepo,
-                                 EvidenceSignatureRepository signatureRepo,
+    public SignedDocumentService(EvidenceSignatureRepository signatureRepo,
                                  UserRepository userRepo,
-                                 OrgAccessService orgAccessService,
                                  CloudinaryService cloudinaryService) {
-        this.evidenceRepo = evidenceRepo;
         this.signatureRepo = signatureRepo;
         this.userRepo = userRepo;
-        this.orgAccessService = orgAccessService;
         this.cloudinaryService = cloudinaryService;
     }
 
     /** One signer as printed on the signature page. */
     private record Signer(String name, String title, String email, String typedName, byte[] image, String signedAt) {}
 
-    public Mono<SignedDocument> build(String requesterEmail, UUID evidenceId) {
-        return evidenceRepo.findById(evidenceId)
-                .switchIfEmpty(Mono.error(new InvalidRecord("Evidence not found")))
-                .flatMap(ev -> orgAccessService.resolveGatedMember(ev.getOrganisationId(), requesterEmail)
-                        .then(loadSigners(evidenceId))
-                        .flatMap(signers -> {
-                            if (signers.isEmpty()) {
-                                return Mono.<SignedDocument>error(new InvalidRecord(
-                                        "This document has not been signed yet, so there is nothing to add to it"));
-                            }
-                            return render(ev, signers);
-                        }));
+    /**
+     * Renders the document with every signature it currently has. Access checks and storage are the caller's job
+     * (see SignedVersionService), which stores the result so Preview and Download serve identical bytes.
+     */
+    public Mono<SignedDocument> renderSigned(Evidence ev) {
+        return loadSigners(ev.getId())
+                .flatMap(signers -> {
+                    if (signers.isEmpty()) {
+                        return Mono.<SignedDocument>error(new InvalidRecord(
+                                "This document has not been signed yet, so there is nothing to add to it"));
+                    }
+                    return render(ev, signers);
+                });
     }
 
     private Mono<List<Signer>> loadSigners(UUID evidenceId) {
@@ -146,7 +141,7 @@ public class SignedDocumentService {
                 ByteArrayOutputStream out = new ByteArrayOutputStream();
                 doc.save(out);
                 String name = stampable ? baseName + "-signed.pdf" : baseName + "-signatures.pdf";
-                return new SignedDocument(out.toByteArray(), name, "application/pdf");
+                return new SignedDocument(out.toByteArray(), name, "application/pdf", signers.size());
             }
         }).subscribeOn(Schedulers.boundedElastic()));
     }

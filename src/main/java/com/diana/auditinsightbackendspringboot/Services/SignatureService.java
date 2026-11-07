@@ -47,6 +47,7 @@ public class SignatureService {
     private final UserRepository userRepo;
     private final OrgAccessService orgAccessService;
     private final EmailService emailService;
+    private final SignedVersionService signedVersionService;
 
     public SignatureService(EvidenceRepository evidenceRepo,
                             EvidenceSignatureRepository signatureRepo,
@@ -54,7 +55,8 @@ public class SignatureService {
                             OrganisationMemberRepository memberRepo,
                             UserRepository userRepo,
                             OrgAccessService orgAccessService,
-                            EmailService emailService) {
+                            EmailService emailService,
+                            SignedVersionService signedVersionService) {
         this.evidenceRepo = evidenceRepo;
         this.signatureRepo = signatureRepo;
         this.requestRepo = requestRepo;
@@ -62,6 +64,7 @@ public class SignatureService {
         this.userRepo = userRepo;
         this.orgAccessService = orgAccessService;
         this.emailService = emailService;
+        this.signedVersionService = signedVersionService;
     }
 
     private static String blankToNull(String v) {
@@ -92,7 +95,11 @@ public class SignatureService {
                     return signatureRepo.findByEvidenceIdAndSignerId(evidenceId, user.getId())
                             .flatMap(existing -> Mono.<SignatureResponse>error(
                                     new InvalidRecord("You have already signed this document")))
-                            .switchIfEmpty(Mono.defer(() -> persistSignature(ev, user, fullName, title, typedName, image)));
+                            .switchIfEmpty(Mono.defer(() -> persistSignature(ev, user, fullName, title, typedName, image)
+                                    // Store the new signed version in the background; Preview/Download create it
+                                    // on demand if this hasn't finished, so signing never waits on Cloudinary.
+                                    .doOnNext(saved -> signedVersionService.createVersionAfterSigning(
+                                            ev, saved.getId(), user.getId()))));
                 }));
     }
 
