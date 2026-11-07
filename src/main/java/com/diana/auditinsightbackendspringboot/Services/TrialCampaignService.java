@@ -116,6 +116,17 @@ public class TrialCampaignService {
                 });
     }
 
+    /** What new sign-ups are offered right now: a trial of {@code durationDays} days, or nothing (paid only). */
+    public record TrialOffer(boolean active, Integer durationDays) {}
+
+    public Mono<TrialOffer> currentOffer() {
+        LocalDateTime now = LocalDateTime.now();
+        return campaignRepo.findFirstByEnabledTrue()
+                .filter(c -> c.isGranting(now))
+                .map(c -> new TrialOffer(true, c.getDurationDays()))
+                .defaultIfEmpty(new TrialOffer(false, null));
+    }
+
     // ── internals ─────────────────────────────────────────────────────────────────
 
     private Mono<CampaignView> setEnabled(UUID campaignId, boolean enabled, String reason, String adminEmail) {

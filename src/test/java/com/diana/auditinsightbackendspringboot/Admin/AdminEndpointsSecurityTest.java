@@ -234,6 +234,13 @@ class AdminEndpointsSecurityTest {
     }
 
     @Test
+    void publicTrialOffer_needsNoLogin_andShowsNoOfferByDefault() {
+        webTestClient.get().uri("/api/public/trial-offer").exchange()
+                .expectStatus().isOk()
+                .expectBody().jsonPath("$.active").isEqualTo(false);
+    }
+
+    @Test
     void trialCampaigns_onlyAdminAllowed() {
         Map<String, Object> body = Map.of("name", "Launch", "durationDays", 30, "reason", "Launch month");
         assertForbiddenForNonAdmins(token -> get(token, "/api/admin/trial-campaigns"));

@@ -60,6 +60,7 @@ public class SecurityConfig {
                         .pathMatchers(
                                 "/api/auth/**",
                                 "/api/subscriptions/webhooks/**",
+                                "/api/public/**",
                                 "/oauth2/**",
                                 "/login/oauth2/**",
                                 "/swagger-ui/**",
