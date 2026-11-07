@@ -14,7 +14,9 @@ import com.diana.auditinsightbackendspringboot.Repositories.OrganisationMemberRe
 import com.diana.auditinsightbackendspringboot.Repositories.PaymentRepository;
 import com.diana.auditinsightbackendspringboot.Repositories.SubscriptionRepository;
 import com.diana.auditinsightbackendspringboot.Repositories.UserRepository;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.math.BigDecimal;
@@ -23,7 +25,14 @@ import java.util.Map;
 import java.util.UUID;
 
 @Service
+@Slf4j
 public class PaymentService {
+
+    /** A MoMo payment younger than this blocks a second one for the same organisation (no double charges). */
+    static final long PENDING_WINDOW_MINUTES = 15;
+
+    /** pawaPay still not knowing a deposit this long after we requested it means the request never reached it. */
+    static final long NOT_FOUND_GRACE_MINUTES = 5;
 
     private final PaymentRepository paymentRepository;
     private final SubscriptionRepository subscriptionRepository;
@@ -33,6 +42,7 @@ public class PaymentService {
     private final FlutterwaveService flutterwaveService;
     private final SubscriptionActivationService activationService;
     private final PlanPriceService planPriceService;
+    private final OrganisationLock organisationLock;
 
     public PaymentService(PaymentRepository paymentRepository,
                            SubscriptionRepository subscriptionRepository,
@@ -41,7 +51,8 @@ public class PaymentService {
                            PawaPayService pawaPayService,
                            FlutterwaveService flutterwaveService,
                            SubscriptionActivationService activationService,
-                           PlanPriceService planPriceService) {
+                           PlanPriceService planPriceService,
+                           OrganisationLock organisationLock) {
         this.paymentRepository = paymentRepository;
         this.subscriptionRepository = subscriptionRepository;
         this.userRepository = userRepository;
@@ -50,6 +61,7 @@ public class PaymentService {
         this.flutterwaveService = flutterwaveService;
         this.activationService = activationService;
         this.planPriceService = planPriceService;
+        this.organisationLock = organisationLock;
     }
 
     public record CardCheckoutResult(Payment payment, String checkoutUrl) {}
@@ -64,15 +76,41 @@ public class PaymentService {
                                 : Mono.just(user)));
     }
 
+    /**
+     * Starts a Mobile Money payment. Only one can be waiting for approval per organisation at a time (checked under
+     * the organisation lock), so a double tap or a second member can't trigger two charges.
+     * <p>
+     * If pawaPay clearly rejects the request, the payment is marked FAILED. If the outcome is unknown (timeout,
+     * connection error, server error) the deposit may still have been created, so the payment stays PENDING and is
+     * resolved by status checks, the pawaPay callback or the reconciliation sweep — never marked failed blindly.
+     */
     public Mono<Payment> startMomoCheckout(UUID organisationId, String email, SubscriptionType subscriptionType,
                                             String phoneNumber) {
         return resolveMember(organisationId, email)
-                .flatMap(user -> createPendingPayment(organisationId, subscriptionType, PaymentProvider.MOMO,
-                                phoneNumber, null, user.getId())
-                        .flatMap(payment -> pawaPayService.requestDeposit(
-                                        payment.getId(), payment.getExpectedAmount(), phoneNumber)
-                                .thenReturn(payment)
-                                .onErrorResume(e -> markFailed(payment, e.getMessage()).then(Mono.error(e)))));
+                .flatMap(user -> organisationLock.inTransaction(organisationId, () -> {
+                    LocalDateTime cutoff = LocalDateTime.now().minusMinutes(PENDING_WINDOW_MINUTES);
+                    return paymentRepository.findAllByOrganisationIdAndStatus(organisationId, PaymentStatus.PENDING)
+                            .filter(p -> p.getProvider() == PaymentProvider.MOMO
+                                    && p.getCreatedAt() != null && p.getCreatedAt().isAfter(cutoff))
+                            .hasElements()
+                            .flatMap(busy -> busy
+                                    ? Mono.<Payment>error(new InvalidRecord("A Mobile Money payment for this organisation "
+                                            + "is already waiting for approval. Approve or decline it on your phone, "
+                                            + "or try again in a few minutes."))
+                                    : createPendingPayment(organisationId, subscriptionType, PaymentProvider.MOMO,
+                                            phoneNumber, null, user.getId()));
+                }))
+                .flatMap(payment -> pawaPayService.requestDeposit(payment.getId(), payment.getExpectedAmount(), phoneNumber)
+                        .thenReturn(payment)
+                        .onErrorResume(e -> {
+                            if (e instanceof PawaPayService.DepositRejectedException) {
+                                return markFailed(payment, e.getMessage()).then(Mono.error(new InvalidRecord(
+                                        "Mobile Money could not start this payment. Check the phone number and try again.")));
+                            }
+                            log.warn("pawaPay deposit request for payment {} had an unknown outcome; keeping it pending: {}",
+                                    payment.getId(), e.getMessage());
+                            return Mono.just(payment);
+                        }));
     }
 
     public Mono<CardCheckoutResult> startCardCheckout(UUID organisationId, String email, SubscriptionType subscriptionType) {
@@ -112,48 +150,75 @@ public class PaymentService {
     }
 
     private Mono<Payment> markFailed(Payment payment, String reason) {
-        return resolveOutcome(payment, PaymentStatus.FAILED, null, reason);
-    }
-
-    /** Provider confirmed the payment, but for less than the fixed price — never activates the subscription. */
-    private Mono<Payment> markUnderpaid(Payment payment, BigDecimal receivedAmount) {
-        return resolveOutcome(payment, PaymentStatus.UNDERPAID, receivedAmount,
-                "Payment could not be completed because the full subscription amount "
-                        + "was not received. Please ensure that the required amount is paid.");
-    }
-
-    private Mono<Payment> markSuccessfulAndActivate(Payment payment, BigDecimal receivedAmount) {
-        return resolveOutcome(payment, PaymentStatus.SUCCESSFUL, receivedAmount, null);
+        return resolveOutcome(payment, PaymentStatus.PENDING, PaymentStatus.FAILED, null, reason, null);
     }
 
     /** Stale PENDING payment nobody ever resolved — stops the reconciliation sweep from retrying it forever. */
     private Mono<Payment> markExpired(Payment payment) {
-        return resolveOutcome(payment, PaymentStatus.EXPIRED, null,
-                "Payment timed out waiting for confirmation.");
+        return resolveOutcome(payment, PaymentStatus.PENDING, PaymentStatus.EXPIRED, null,
+                "Payment timed out waiting for confirmation.", null);
     }
 
     /**
-     * Atomically claims the PENDING -> {@code newStatus} transition so that only one of several
-     * concurrent resolvers for the same payment (a client poll, a provider webhook, a duplicate
-     * webhook delivery, or the reconciliation sweep) ever proceeds — see PaymentRepository#resolveIfPending.
-     * The loser gets the current (already-resolved) row back untouched instead of re-running
-     * {@link SubscriptionActivationService#activateFromPayment}, which closes the race where two
-     * winners could each extend/create a subscription for the same payment.
+     * Confirmed by the provider: SUCCESSFUL (activates paid time) or, if less than the fixed price arrived, UNDERPAID
+     * (never activates). {@code from} is PENDING normally, or EXPIRED when a payment completes after we gave up on it.
      */
-    private Mono<Payment> resolveOutcome(Payment payment, PaymentStatus newStatus,
-                                          BigDecimal receivedAmount, String failureReason) {
-        return paymentRepository.resolveIfPending(payment.getId(), newStatus, receivedAmount, failureReason)
-                .flatMap(rowsUpdated -> {
-                    if (rowsUpdated == 0) {
-                        return paymentRepository.findById(payment.getId());
-                    }
-                    payment.setStatus(newStatus);
-                    payment.setReceivedAmount(receivedAmount);
-                    payment.setFailureReason(failureReason);
-                    payment.setUpdatedAt(LocalDateTime.now());
-                    return newStatus == PaymentStatus.SUCCESSFUL
-                            ? activationService.activateFromPayment(payment).thenReturn(payment)
-                            : Mono.just(payment);
+    private Mono<Payment> markConfirmed(Payment payment, PaymentStatus from, BigDecimal receivedAmount,
+                                        String providerReference) {
+        if (isUnderpaid(payment, receivedAmount)) {
+            return resolveOutcome(payment, from, PaymentStatus.UNDERPAID, receivedAmount,
+                    "Payment could not be completed because the full subscription amount "
+                            + "was not received. Please ensure that the required amount is paid.", providerReference);
+        }
+        return resolveOutcome(payment, from, PaymentStatus.SUCCESSFUL, receivedAmount, null, providerReference);
+    }
+
+    /**
+     * Atomically claims the {@code from -> newStatus} transition so only one of several concurrent resolvers (a client
+     * poll, a provider callback, a duplicate callback, the reconciliation sweep) ever acts on a payment. The status
+     * change and, for SUCCESSFUL, the new paid period are written in one transaction under the organisation lock:
+     * if activation fails, the status change rolls back and the payment is simply resolved again later.
+     */
+    private Mono<Payment> resolveOutcome(Payment payment, PaymentStatus from, PaymentStatus newStatus,
+                                          BigDecimal receivedAmount, String failureReason, String providerReference) {
+        return organisationLock.inTransaction(payment.getOrganisationId(), () -> claim(payment, from, newStatus,
+                        receivedAmount, failureReason)
+                        .flatMap(won -> {
+                            if (!won) {
+                                return paymentRepository.findById(payment.getId());
+                            }
+                            payment.setStatus(newStatus);
+                            payment.setReceivedAmount(receivedAmount);
+                            payment.setFailureReason(failureReason);
+                            payment.setUpdatedAt(LocalDateTime.now());
+                            return newStatus == PaymentStatus.SUCCESSFUL
+                                    ? activationService.activateFromPayment(payment)
+                                            .doOnNext(sub -> payment.setSubscriptionId(sub.getId()))
+                                            .thenReturn(payment)
+                                    : Mono.just(payment);
+                        }))
+                .flatMap(resolved -> storeProviderReference(resolved, providerReference));
+    }
+
+    private Mono<Boolean> claim(Payment payment, PaymentStatus from, PaymentStatus newStatus,
+                                BigDecimal receivedAmount, String failureReason) {
+        Mono<Integer> update = from == PaymentStatus.PENDING
+                ? paymentRepository.resolveIfPending(payment.getId(), newStatus, receivedAmount, failureReason)
+                : paymentRepository.resolveIfStatus(payment.getId(), from, newStatus, receivedAmount, failureReason);
+        return update.map(rows -> rows > 0);
+    }
+
+    /** Best effort, outside the activation transaction: a problem storing the reference never undoes a payment. */
+    private Mono<Payment> storeProviderReference(Payment payment, String providerReference) {
+        if (providerReference == null || providerReference.isBlank() || payment.getProviderTransactionId() != null) {
+            return Mono.just(payment);
+        }
+        return paymentRepository.setProviderReferenceIfAbsent(payment.getId(), providerReference)
+                .doOnNext(rows -> { if (rows > 0) payment.setProviderTransactionId(providerReference); })
+                .thenReturn(payment)
+                .onErrorResume(e -> {
+                    log.warn("Could not store the provider reference for payment {}: {}", payment.getId(), e.getMessage());
+                    return Mono.just(payment);
                 });
     }
 
@@ -161,13 +226,23 @@ public class PaymentService {
         return receivedAmount != null && receivedAmount.compareTo(payment.getExpectedAmount()) < 0;
     }
 
+    /**
+     * Status for the app's polling. A PENDING MoMo payment is re-checked with pawaPay; an EXPIRED one is checked once
+     * more in case it completed after we stopped waiting.
+     */
     public Mono<Payment> getMomoPaymentStatus(UUID paymentId, String email) {
         return paymentRepository.findById(paymentId)
                 .switchIfEmpty(Mono.error(new InvalidRecord("Payment not found")))
                 .flatMap(payment -> resolveMember(payment.getOrganisationId(), email).thenReturn(payment))
-                .flatMap(payment -> payment.getStatus() != PaymentStatus.PENDING
-                        ? Mono.just(payment)
-                        : reconcilePendingPayment(payment));
+                .flatMap(payment -> {
+                    if (payment.getStatus() == PaymentStatus.PENDING) {
+                        return reconcilePendingPayment(payment);
+                    }
+                    if (payment.getStatus() == PaymentStatus.EXPIRED && payment.getProvider() == PaymentProvider.MOMO) {
+                        return recoverLateMomoPayment(payment);
+                    }
+                    return Mono.just(payment);
+                });
     }
 
     @SuppressWarnings("unchecked")
@@ -220,34 +295,54 @@ public class PaymentService {
                 || !payment.getCurrency().equalsIgnoreCase(verification.currency())) {
             return markFailed(payment, "Verified transaction did not match this payment (tx_ref/currency mismatch)");
         }
-        return isUnderpaid(payment, verification.amount())
-                ? markUnderpaid(payment, verification.amount())
-                : markSuccessfulAndActivate(payment, verification.amount());
+        return markConfirmed(payment, PaymentStatus.PENDING, verification.amount(), null);
     }
 
     /**
-     * pawaPay deposit callback. The callback body is attacker-controlled and only ever used as a
-     * trigger — the outcome always comes from re-querying pawaPay's own API (see PawaPayService#getStatus)
-     * before anything is marked successful. An unknown deposit id, a non-MoMo payment, or a payment
-     * that's already terminal (duplicate delivery) is silently ignored.
+     * pawaPay deposit callback. The callback body is attacker-controlled and only ever used as a trigger — the outcome
+     * always comes from re-querying pawaPay's own API before anything is marked successful. Handles PENDING payments
+     * and EXPIRED ones (a payment approved after we stopped waiting still gets its paid time). Unknown deposit ids,
+     * non-MoMo payments and other final statuses (duplicate deliveries) are ignored.
      */
     public Mono<Void> handlePawaPayCallback(UUID depositId) {
         return paymentRepository.findById(depositId)
                 .filter(payment -> payment.getProvider() == PaymentProvider.MOMO)
-                .filter(payment -> payment.getStatus() == PaymentStatus.PENDING)
-                .flatMap(this::reconcileMomoPayment)
+                .flatMap(payment -> switch (payment.getStatus()) {
+                    case PENDING -> reconcileMomoPayment(payment);
+                    case EXPIRED -> recoverLateMomoPayment(payment);
+                    default -> Mono.<Payment>empty();
+                })
                 .then();
     }
 
     private Mono<Payment> reconcileMomoPayment(Payment payment) {
         return pawaPayService.getStatus(payment.getId())
                 .flatMap(result -> switch (result.status()) {
-                    case SUCCESSFUL -> isUnderpaid(payment, result.amount())
-                            ? markUnderpaid(payment, result.amount())
-                            : markSuccessfulAndActivate(payment, result.amount());
+                    case SUCCESSFUL -> markConfirmed(payment, PaymentStatus.PENDING, result.amount(),
+                            result.providerReference());
                     case FAILED -> markFailed(payment, result.failureReason());
                     case PENDING -> Mono.just(payment);
+                    case NOT_FOUND -> isPastNotFoundGrace(payment)
+                            ? markFailed(payment, "The payment request never reached Mobile Money. No money was taken.")
+                            : Mono.just(payment);
                 });
+    }
+
+    /** An EXPIRED MoMo payment that pawaPay now reports as completed is recovered; anything else is left as is. */
+    private Mono<Payment> recoverLateMomoPayment(Payment payment) {
+        return pawaPayService.getStatus(payment.getId())
+                .flatMap(result -> {
+                    if (result.status() != PawaPayService.PawaPayStatus.SUCCESSFUL) {
+                        return Mono.just(payment);
+                    }
+                    log.info("Payment {} completed after it had expired; recovering it", payment.getId());
+                    return markConfirmed(payment, PaymentStatus.EXPIRED, result.amount(), result.providerReference());
+                });
+    }
+
+    private boolean isPastNotFoundGrace(Payment payment) {
+        return payment.getCreatedAt() == null
+                || payment.getCreatedAt().isBefore(LocalDateTime.now().minusMinutes(NOT_FOUND_GRACE_MINUTES));
     }
 
     /**
@@ -263,20 +358,43 @@ public class PaymentService {
         };
     }
 
-    /** A PENDING payment too old to still be worth re-checking. */
+    /**
+     * A PENDING payment too old to keep waiting for. MoMo payments get one last check with pawaPay first, so a
+     * completed or failed payment is recorded as such; only one that is still unresolved is expired. If pawaPay
+     * can't be reached the error propagates and the payment is retried on the next sweep.
+     */
     public Mono<Payment> expireStalePayment(Payment payment) {
-        return markExpired(payment);
+        if (payment.getProvider() != PaymentProvider.MOMO) {
+            return markExpired(payment);
+        }
+        return reconcileMomoPayment(payment)
+                .flatMap(after -> after.getStatus() == PaymentStatus.PENDING ? markExpired(after) : Mono.just(after));
     }
 
-    /** The org's current subscription — TRIAL or a paid ACTIVE period. */
+    /**
+     * Safety net: SUCCESSFUL payments with no paid period (only possible for payments recorded before activation and
+     * status were saved together) get their period now.
+     */
+    public Flux<Subscription> activateUnlinkedSuccessfulPayments() {
+        return paymentRepository.findAllByStatusAndSubscriptionIdIsNull(PaymentStatus.SUCCESSFUL)
+                .concatMap(payment -> activationService.activateFromPayment(payment)
+                        .doOnNext(sub -> log.warn("Activated paid period {} for previously unlinked payment {}",
+                                sub.getId(), payment.getId()))
+                        .onErrorResume(e -> {
+                            log.error("Could not activate unlinked payment {}: {}", payment.getId(), e.getMessage());
+                            return Mono.empty();
+                        }));
+    }
+
+    /** The paid period running now, or else the next one queued (e.g. bought during a trial). */
     public Mono<Subscription> getActiveSubscription(UUID organisationId, String email) {
+        LocalDateTime now = LocalDateTime.now();
         return resolveMember(organisationId, email)
-                .then(Mono.defer(() -> subscriptionRepository
-                        .findFirstByOrganisationIdOrderByCreatedAtDesc(organisationId)))
-                .switchIfEmpty(Mono.error(new InvalidRecord("No subscription found for this organisation")))
-                .flatMap(subscription -> subscription.getStatus() == SubscriptionStatus.TRIAL
-                                || subscription.getStatus() == SubscriptionStatus.ACTIVE
-                        ? Mono.just(subscription)
-                        : Mono.error(new InvalidRecord("No active subscription for this organisation")));
+                .then(Mono.defer(() -> activationService.currentPeriod(organisationId, now)
+                        .switchIfEmpty(subscriptionRepository
+                                .findAllByOrganisationIdAndStatusOrderByEndDateAsc(organisationId, SubscriptionStatus.ACTIVE)
+                                .filter(s -> s.getStartDate() != null && s.getStartDate().isAfter(now))
+                                .next())))
+                .switchIfEmpty(Mono.error(new InvalidRecord("No active subscription for this organisation")));
     }
 }

@@ -133,14 +133,14 @@ class PawaPayServiceTest {
     }
 
     @Test
-    void getStatus_notFound_throws() {
+    void getStatus_notFound_reportsNotFound() {
         UUID depositId = UUID.randomUUID();
         when(restTemplate.exchange(contains("/v2/deposits/" + depositId), eq(HttpMethod.GET),
                 any(HttpEntity.class), eq(Map.class)))
                 .thenReturn(ResponseEntity.ok(Map.of("status", "NOT_FOUND")));
 
         StepVerifier.create(pawaPayService.getStatus(depositId))
-                .expectError(RuntimeException.class)
-                .verify();
+                .expectNextMatches(r -> r.status() == PawaPayService.PawaPayStatus.NOT_FOUND)
+                .verifyComplete();
     }
 }

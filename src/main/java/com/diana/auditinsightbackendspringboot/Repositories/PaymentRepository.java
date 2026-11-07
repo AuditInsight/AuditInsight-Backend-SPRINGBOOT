@@ -41,4 +41,23 @@ public interface PaymentRepository extends ReactiveCrudRepository<Payment, UUID>
             "failure_reason = :failureReason, updated_at = CURRENT_TIMESTAMP " +
             "WHERE id = :id AND status = 'PENDING'")
     Mono<Integer> resolveIfPending(UUID id, PaymentStatus status, BigDecimal receivedAmount, String failureReason);
+
+    /** Same compare-and-set as {@link #resolveIfPending}, from any expected status (used to recover a late success). */
+    @Modifying
+    @Query("UPDATE payments SET status = :status, received_amount = :receivedAmount, " +
+            "failure_reason = :failureReason, updated_at = CURRENT_TIMESTAMP " +
+            "WHERE id = :id AND status = :expected")
+    Mono<Integer> resolveIfStatus(UUID id, PaymentStatus expected, PaymentStatus status, BigDecimal receivedAmount,
+                                  String failureReason);
+
+    /** Stores the operator's transaction id once, for support and reconciliation. */
+    @Modifying
+    @Query("UPDATE payments SET provider_transaction_id = :reference, updated_at = CURRENT_TIMESTAMP " +
+            "WHERE id = :id AND provider_transaction_id IS NULL")
+    Mono<Integer> setProviderReferenceIfAbsent(UUID id, String reference);
+
+    Flux<Payment> findAllByOrganisationIdAndStatus(UUID organisationId, PaymentStatus status);
+
+    /** Successful payments that never got their paid period (activation failed after the status was saved). */
+    Flux<Payment> findAllByStatusAndSubscriptionIdIsNull(PaymentStatus status);
 }

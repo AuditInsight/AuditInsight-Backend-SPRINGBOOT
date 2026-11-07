@@ -113,6 +113,7 @@ public class SubscriptionController {
                        "as a backup, so this always acknowledges with 200 rather than retry-storming pawaPay.")
     public Mono<ResponseEntity<Void>> pawaPayWebhook(@RequestBody Map<String, Object> payload) {
         Object depositIdValue = payload.get("depositId");
+        log.info("pawaPay callback received: depositId={}, status={}", depositIdValue, payload.get("status"));
         UUID depositId;
         try {
             depositId = UUID.fromString(String.valueOf(depositIdValue));
