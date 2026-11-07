@@ -109,7 +109,7 @@ public class EvidenceService {
         r.setDocumentName(e.getDocumentName());
         r.setFolder(e.getFolder());
         r.setSubfolder(e.getSubfolder());
-        r.setFileUpload(e.getFileUpload());
+        r.setFileUpload(EvidenceResponse.originalPath(e));
         r.setFileType(e.getFileType());
         r.setNotes(e.getNotes());
         r.setUploadedBy(e.getUploadedBy());

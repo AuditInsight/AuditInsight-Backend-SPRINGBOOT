@@ -87,7 +87,8 @@ class EvidenceServiceTest {
                         ORG_ID, TXN_ID, "Supplier Invoice",
                         "Purchases and Procurement", "Supplier Invoices", null))
                 .expectNextMatches(r -> r.getFileType().equals("pdf")
-                        && r.getFileUpload().equals("https://res.cloudinary.com/test/invoice.pdf")
+                        // the API path, never the raw storage URL
+                        && r.getFileUpload().equals("/api/evidence/" + r.getId() + "/original")
                         && r.getDocumentName().equals("Supplier Invoice"))
                 .verifyComplete();
     }

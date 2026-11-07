@@ -159,7 +159,7 @@ public class TransactionService {
                                     er.setDocumentName(e.getDocumentName());
                                     er.setFolder(e.getFolder());
                                     er.setSubfolder(e.getSubfolder());
-                                    er.setFileUpload(e.getFileUpload());
+                                    er.setFileUpload(EvidenceResponse.originalPath(e));
                                     er.setFileType(e.getFileType());
                                     er.setNotes(e.getNotes());
                                     er.setUploadedBy(e.getUploadedBy());
