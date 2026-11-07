@@ -9,6 +9,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import org.springframework.security.core.Authentication;
 import reactor.core.publisher.Mono;
 
@@ -18,6 +19,8 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
 /**
@@ -37,11 +40,11 @@ class SignatureControllerTest {
         byte[] pdf = "stored-pdf".getBytes(StandardCharsets.UTF_8);
         String sha = "a".repeat(64);
         when(auth.getName()).thenReturn("signer@test.com");
-        when(signedVersionService.serve("signer@test.com", evidenceId)).thenReturn(Mono.just(
+        when(signedVersionService.serve(eq("signer@test.com"), eq(evidenceId), any())).thenReturn(Mono.just(
                 new SignedVersionService.ServedVersion(UUID.randomUUID(), 3, sha, "contract-signed.pdf", pdf)));
 
         ResponseEntity<byte[]> response = new SignatureController(signatureService, signedVersionService)
-                .downloadSigned(auth, evidenceId).block();
+                .downloadSigned(auth, evidenceId, MockServerHttpRequest.get("/").build()).block();
 
         HttpHeaders headers = response.getHeaders();
         assertEquals(MediaType.APPLICATION_PDF, headers.getContentType());

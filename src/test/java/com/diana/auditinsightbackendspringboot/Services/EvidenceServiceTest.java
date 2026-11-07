@@ -8,6 +8,7 @@ import com.diana.auditinsightbackendspringboot.Repositories.*;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.core.io.buffer.DataBuffer;
@@ -23,9 +24,12 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -42,6 +46,7 @@ class EvidenceServiceTest {
     @Mock private CloudinaryService cloudinaryService;
     @Mock private NotificationService notificationService;
     @Mock private EvidenceSignatureRepository signatureRepo;
+    @Mock private AuditTrailService auditTrail;
 
     private EvidenceService service;
 
@@ -55,7 +60,8 @@ class EvidenceServiceTest {
         OrgAccessService orgAccessService = new OrgAccessService(
                 userRepo, memberRepo, subscriptionRepo, platformFreeAccessService);
         service = new EvidenceService(evidenceRepo, txnRepo, organisationRepo, orgAccessService,
-                txnService, cloudinaryService, notificationService, signatureRepo);
+                txnService, cloudinaryService, notificationService, signatureRepo, auditTrail);
+        lenient().when(auditTrail.record(any(), any(), any(), any(), any())).thenReturn(Mono.empty());
         lenient().when(platformFreeAccessService.isEnabled()).thenReturn(Mono.just(false));
         lenient().when(organisationRepo.findById(ORG_ID))
                 .thenReturn(Mono.just(organisation(ORG_ID, OrganisationType.PRIVATE)));
@@ -83,6 +89,26 @@ class EvidenceServiceTest {
                         && r.getFileUpload().equals("https://res.cloudinary.com/test/invoice.pdf")
                         && r.getDocumentName().equals("Supplier Invoice"))
                 .verifyComplete();
+    }
+
+    @Test
+    void uploadEvidence_recordsTheOriginalsFingerprintAndAnUploadEvent() {
+        mockActiveMember("client@test.com", 1L, Role.CLIENT);
+        when(cloudinaryService.upload(any(byte[].class), anyString(), anyString()))
+                .thenReturn(Mono.just("https://res.cloudinary.com/test/nda.pdf"));
+        when(evidenceRepo.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
+
+        StepVerifier.create(service.uploadEvidence("client@test.com", filePart("nda.pdf"),
+                        ORG_ID, null, "NDA", "Purchases and Procurement", "Supplier Invoices", null))
+                .expectNextCount(1)
+                .verifyComplete();
+
+        ArgumentCaptor<Evidence> saved = ArgumentCaptor.forClass(Evidence.class);
+        verify(evidenceRepo).save(saved.capture());
+        assertEquals(
+                SignedVersionService.sha256Hex("test-file-content".getBytes()), saved.getValue().getOriginalSha256());
+        verify(auditTrail).record(any(), eq(AuditEventType.DOCUMENT_UPLOADED),
+                any(), any(), any());
     }
 
     @Test

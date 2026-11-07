@@ -52,4 +52,11 @@ public class EvidenceSignature {
     // SHA-256 of the document the signer placed the signature on; null when the signature wasn't placed.
     @Column("base_sha256")
     private String baseSha256;
+
+    // Where the signature came from (client IP behind the proxy, and browser), as evidence of who signed.
+    @Column("signer_ip")
+    private String signerIp;
+
+    @Column("signer_user_agent")
+    private String signerUserAgent;
 }

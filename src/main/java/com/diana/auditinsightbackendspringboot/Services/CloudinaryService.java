@@ -37,6 +37,14 @@ public class CloudinaryService {
     private String apiKey;
     @Value("${CLOUDINARY_API_SECRET}")
     private String apiSecret;
+    /**
+     * "upload" (default) stores files publicly reachable by URL, as before. "authenticated" stores new uploads
+     * privately: they can then only be fetched through the API (signed, short-lived URLs), which is how the app
+     * now opens every file. Existing files keep their current delivery type. Verify downloads on the Cloudinary
+     * account before switching production to "authenticated".
+     */
+    @Value("${cloudinary.delivery-type:upload}")
+    private String deliveryType = "upload";
     private final WebClient webClient = WebClient.builder()
             .exchangeStrategies(ExchangeStrategies.builder()
                     .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(MAX_DOWNLOAD_BYTES))
@@ -73,8 +81,12 @@ public class CloudinaryService {
                 Map<String, Object> options = new HashMap<>();
                 options.put("folder", "auditinsight/" + folder);
                 options.put("resource_type", resourceType);
-                options.put("type", "upload");
-                options.put("access_mode", "public");
+                if ("authenticated".equalsIgnoreCase(deliveryType)) {
+                    options.put("type", "authenticated");
+                } else {
+                    options.put("type", "upload");
+                    options.put("access_mode", "public");
+                }
                 if ("raw".equals(resourceType)) {
                     // Unlike "image", Cloudinary never appends a format/extension to a "raw"
                     // public ID on its own, so without one the stored URL has no extension and

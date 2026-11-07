@@ -1,11 +1,13 @@
 package com.diana.auditinsightbackendspringboot.Services;
 
 import com.diana.auditinsightbackendspringboot.DTOs.EvidenceSignaturesResponse;
+import com.diana.auditinsightbackendspringboot.DTOs.RequestMeta;
 import com.diana.auditinsightbackendspringboot.DTOs.RequestSignatureRequest;
 import com.diana.auditinsightbackendspringboot.DTOs.SignEvidenceRequest;
 import com.diana.auditinsightbackendspringboot.DTOs.SignatureRequestResponse;
 import com.diana.auditinsightbackendspringboot.DTOs.SignatureResponse;
 import com.diana.auditinsightbackendspringboot.DTOs.SignaturePlacementRequest;
+import com.diana.auditinsightbackendspringboot.Enum.AuditEventType;
 import com.diana.auditinsightbackendspringboot.Enum.MemberStatus;
 import com.diana.auditinsightbackendspringboot.Enum.SignatureRequestStatus;
 import com.diana.auditinsightbackendspringboot.Exceptions.Custom.ForbiddenException;
@@ -54,6 +56,7 @@ public class SignatureService {
     private final EmailService emailService;
     private final SignedVersionService signedVersionService;
     private final EvidenceSignaturePlacementRepository placementRepo;
+    private final AuditTrailService auditTrail;
 
     public SignatureService(EvidenceRepository evidenceRepo,
                             EvidenceSignatureRepository signatureRepo,
@@ -63,7 +66,8 @@ public class SignatureService {
                             OrgAccessService orgAccessService,
                             EmailService emailService,
                             SignedVersionService signedVersionService,
-                            EvidenceSignaturePlacementRepository placementRepo) {
+                            EvidenceSignaturePlacementRepository placementRepo,
+                            AuditTrailService auditTrail) {
         this.evidenceRepo = evidenceRepo;
         this.signatureRepo = signatureRepo;
         this.requestRepo = requestRepo;
@@ -73,6 +77,7 @@ public class SignatureService {
         this.emailService = emailService;
         this.signedVersionService = signedVersionService;
         this.placementRepo = placementRepo;
+        this.auditTrail = auditTrail;
     }
 
     private static String blankToNull(String v) {
@@ -87,6 +92,10 @@ public class SignatureService {
     // ── Sign (voluntary — no prior request needed) ────────────────────────────────
 
     public Mono<SignatureResponse> sign(String email, UUID evidenceId, SignEvidenceRequest body) {
+        return sign(email, evidenceId, body, RequestMeta.NONE);
+    }
+
+    public Mono<SignatureResponse> sign(String email, UUID evidenceId, SignEvidenceRequest body, RequestMeta meta) {
         String typedName = body.getTypedName() == null || body.getTypedName().isBlank()
                 ? null : body.getTypedName().trim();
         String fullName = blankToNull(body.getFullName());
@@ -114,12 +123,27 @@ public class SignatureService {
                             .flatMap(existing -> Mono.<SignatureResponse>error(
                                     new InvalidRecord("You have already signed this document")))
                             .switchIfEmpty(Mono.defer(() -> persistSignature(ev, user, fullName, title, typedName, image,
-                                            placements, baseSha256)
+                                            placements, baseSha256, meta)
+                                    .flatMap(saved -> auditTrail.record(ev, AuditEventType.SIGNED, user, meta,
+                                                    new AuditTrailService.Detail(null, baseSha256, describeSigning(
+                                                            saved.getSignerName(), placements)))
+                                            .thenReturn(saved))
                                     // Store the new signed version in the background; Preview/Download create it
                                     // on demand if this hasn't finished, so signing never waits on Cloudinary.
                                     .doOnNext(saved -> signedVersionService.createVersionAfterSigning(
                                             ev, saved.getId(), user.getId()))));
                 }));
+    }
+
+    /** Audit text for a signature: who signed and where it was put. */
+    static String describeSigning(String signerName, List<SignaturePlacementRequest> placements) {
+        if (placements.isEmpty()) {
+            return "Signed as " + signerName + "; signature added to the signature block";
+        }
+        String pages = placements.stream().map(p -> String.valueOf(p.getPageIndex() + 1)).distinct()
+                .reduce((a, b) -> a + ", " + b).orElse("");
+        return "Signed as " + signerName + "; placed " + placements.size()
+                + (placements.size() == 1 ? " time" : " times") + " on page" + (pages.contains(",") ? "s " : " ") + pages;
     }
 
     /** Null when the placements are usable; otherwise the message to show. Field ranges are checked by @Valid. */
@@ -143,7 +167,8 @@ public class SignatureService {
 
     private Mono<SignatureResponse> persistSignature(Evidence ev, User user, String fullName, String title,
                                                      String typedName, String image,
-                                                     List<SignaturePlacementRequest> placements, String baseSha256) {
+                                                     List<SignaturePlacementRequest> placements, String baseSha256,
+                                                     RequestMeta meta) {
         return requestRepo.findByEvidenceIdAndRequestedUserIdAndStatus(
                         ev.getId(), user.getId(), SignatureRequestStatus.PENDING)
                 .map(Optional::of)
@@ -161,6 +186,8 @@ public class SignatureService {
                     s.setSignedAt(now);
                     s.setRequestId(pending.map(SignatureRequest::getId).orElse(null));
                     s.setBaseSha256(baseSha256);
+                    s.setSignerIp(meta.ip());
+                    s.setSignerUserAgent(meta.userAgent());
                     return signatureRepo.save(s)
                             .flatMap(saved -> savePlacements(saved.getId(), placements, now).thenReturn(saved))
                             .flatMap(saved -> pending
@@ -200,11 +227,20 @@ public class SignatureService {
 
     public Mono<List<SignatureRequestResponse>> requestSignatures(String email, UUID evidenceId,
                                                                   RequestSignatureRequest body) {
+        return requestSignatures(email, evidenceId, body, RequestMeta.NONE);
+    }
+
+    public Mono<List<SignatureRequestResponse>> requestSignatures(String email, UUID evidenceId,
+                                                                  RequestSignatureRequest body, RequestMeta meta) {
         return findEvidence(evidenceId).flatMap(ev ->
                 orgAccessService.resolveGatedMember(ev.getOrganisationId(), email).flatMap(ctx ->
                         resolveTargetIds(body).flatMap(ids ->
                                 Flux.fromIterable(ids)
-                                        .concatMap(uid -> createRequest(ev, ctx.user(), uid, body.getMessage()))
+                                        .concatMap(uid -> createRequest(ev, ctx.user(), uid, body.getMessage())
+                                                .flatMap(r -> auditTrail.record(ev, AuditEventType.SIGNATURE_REQUESTED,
+                                                                ctx.user(), meta, AuditTrailService.Detail.text(
+                                                                        "Asked " + r.getRequestedUserName() + " to sign"))
+                                                        .thenReturn(r)))
                                         .map(r -> toResponse(r, ev.getDocumentName()))
                                         .collectList())));
     }
@@ -302,6 +338,10 @@ public class SignatureService {
     // ── Decline ───────────────────────────────────────────────────────────────────
 
     public Mono<SignatureRequestResponse> decline(String email, UUID requestId) {
+        return decline(email, requestId, RequestMeta.NONE);
+    }
+
+    public Mono<SignatureRequestResponse> decline(String email, UUID requestId, RequestMeta meta) {
         return userRepo.findByUsername(email)
                 .switchIfEmpty(Mono.error(new InvalidRecord("User not found")))
                 .flatMap(user -> requestRepo.findById(requestId)
@@ -315,7 +355,11 @@ public class SignatureService {
                             }
                             req.setStatus(SignatureRequestStatus.DECLINED);
                             req.setRespondedAt(LocalDateTime.now());
-                            return requestRepo.save(req);
+                            return requestRepo.save(req).flatMap(saved -> evidenceRepo.findById(saved.getEvidenceId())
+                                    .flatMap(ev -> auditTrail.record(ev, AuditEventType.SIGNATURE_DECLINED, user, meta,
+                                            AuditTrailService.Detail.text("Declined the request from "
+                                                    + saved.getRequestedByName())))
+                                    .thenReturn(saved));
                         }))
                 .flatMap(saved -> evidenceRepo.findById(saved.getEvidenceId())
                         .map(Evidence::getDocumentName)

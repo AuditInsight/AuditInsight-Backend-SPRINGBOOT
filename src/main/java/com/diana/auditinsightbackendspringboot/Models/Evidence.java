@@ -47,4 +47,8 @@ public class Evidence {
 
     @Column("uploaded_at")
     private LocalDateTime uploadedAt;
+
+    // SHA-256 of the original upload (version 0); null for documents uploaded before integrity tracking until first fetched.
+    @Column("original_sha256")
+    private String originalSha256;
 }

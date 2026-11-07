@@ -1,6 +1,7 @@
 package com.diana.auditinsightbackendspringboot.Controllers;
 
 import com.diana.auditinsightbackendspringboot.DTOs.EvidenceSignaturesResponse;
+import com.diana.auditinsightbackendspringboot.DTOs.RequestMeta;
 import com.diana.auditinsightbackendspringboot.DTOs.RequestSignatureRequest;
 import com.diana.auditinsightbackendspringboot.DTOs.SignEvidenceRequest;
 import com.diana.auditinsightbackendspringboot.DTOs.SignatureRequestResponse;
@@ -16,6 +17,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
@@ -50,8 +52,10 @@ public class SignatureController {
     public Mono<ResponseEntity<SignatureResponse>> sign(
             Authentication auth,
             @PathVariable UUID evidenceId,
-            @Valid @RequestBody(required = false) SignEvidenceRequest body) {
-        return signatureService.sign(auth.getName(), evidenceId, body == null ? new SignEvidenceRequest() : body)
+            @Valid @RequestBody(required = false) SignEvidenceRequest body,
+            ServerHttpRequest request) {
+        return signatureService.sign(auth.getName(), evidenceId, body == null ? new SignEvidenceRequest() : body,
+                        RequestMeta.from(request))
                 .map(r -> new ResponseEntity<>(r, HttpStatus.CREATED));
     }
 
@@ -71,8 +75,9 @@ public class SignatureController {
     public Mono<ResponseEntity<List<SignatureRequestResponse>>> request(
             Authentication auth,
             @PathVariable UUID evidenceId,
-            @Valid @RequestBody RequestSignatureRequest body) {
-        return signatureService.requestSignatures(auth.getName(), evidenceId, body)
+            @Valid @RequestBody RequestSignatureRequest body,
+            ServerHttpRequest request) {
+        return signatureService.requestSignatures(auth.getName(), evidenceId, body, RequestMeta.from(request))
                 .map(r -> new ResponseEntity<>(r, HttpStatus.CREATED));
     }
 
@@ -86,8 +91,9 @@ public class SignatureController {
                     "X-Document-Version and X-Document-SHA256 headers identify it. Fails if nobody has signed yet.")
     public Mono<ResponseEntity<byte[]>> downloadSigned(
             Authentication auth,
-            @PathVariable UUID evidenceId) {
-        return signedVersionService.serve(auth.getName(), evidenceId)
+            @PathVariable UUID evidenceId,
+            ServerHttpRequest request) {
+        return signedVersionService.serve(auth.getName(), evidenceId, RequestMeta.from(request))
                 .map(doc -> ResponseEntity.ok()
                         .contentType(MediaType.APPLICATION_PDF)
                         .header(HttpHeaders.CONTENT_DISPOSITION,
@@ -130,7 +136,8 @@ public class SignatureController {
             description = "Declines a request addressed to you. You can still sign the document later if you change your mind.")
     public Mono<ResponseEntity<SignatureRequestResponse>> decline(
             Authentication auth,
-            @PathVariable UUID requestId) {
-        return signatureService.decline(auth.getName(), requestId).map(ResponseEntity::ok);
+            @PathVariable UUID requestId,
+            ServerHttpRequest request) {
+        return signatureService.decline(auth.getName(), requestId, RequestMeta.from(request)).map(ResponseEntity::ok);
     }
 }

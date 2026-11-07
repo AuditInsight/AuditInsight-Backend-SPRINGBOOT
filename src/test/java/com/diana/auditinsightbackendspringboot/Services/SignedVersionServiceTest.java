@@ -43,6 +43,7 @@ class SignedVersionServiceTest {
     @Mock private SignedDocumentService signedDocumentService;
     @Mock private CloudinaryService cloudinaryService;
     @Mock private OrgAccessService orgAccessService;
+    @Mock private AuditTrailService auditTrail;
 
     private SignedVersionService service;
 
@@ -57,7 +58,8 @@ class SignedVersionServiceTest {
     @BeforeEach
     void setUp() {
         service = new SignedVersionService(evidenceRepo, signatureRepo, versionRepo,
-                signedDocumentService, cloudinaryService, orgAccessService);
+                signedDocumentService, cloudinaryService, orgAccessService, auditTrail);
+        lenient().when(auditTrail.record(any(), any(), any(), any(), any())).thenReturn(Mono.empty());
 
         evidence = new Evidence();
         evidence.setId(evidenceId);

@@ -1,5 +1,7 @@
 package com.diana.auditinsightbackendspringboot.Services;
 
+import com.diana.auditinsightbackendspringboot.DTOs.RequestMeta;
+import com.diana.auditinsightbackendspringboot.Enum.AuditEventType;
 import com.diana.auditinsightbackendspringboot.Exceptions.Custom.InvalidRecord;
 import com.diana.auditinsightbackendspringboot.Models.Evidence;
 import com.diana.auditinsightbackendspringboot.Models.EvidenceDocumentVersion;
@@ -43,27 +45,39 @@ public class SignedVersionService {
     private final SignedDocumentService signedDocumentService;
     private final CloudinaryService cloudinaryService;
     private final OrgAccessService orgAccessService;
+    private final AuditTrailService auditTrail;
 
     public SignedVersionService(EvidenceRepository evidenceRepo,
                                 EvidenceSignatureRepository signatureRepo,
                                 EvidenceDocumentVersionRepository versionRepo,
                                 SignedDocumentService signedDocumentService,
                                 CloudinaryService cloudinaryService,
-                                OrgAccessService orgAccessService) {
+                                OrgAccessService orgAccessService,
+                                AuditTrailService auditTrail) {
         this.evidenceRepo = evidenceRepo;
         this.signatureRepo = signatureRepo;
         this.versionRepo = versionRepo;
         this.signedDocumentService = signedDocumentService;
         this.cloudinaryService = cloudinaryService;
         this.orgAccessService = orgAccessService;
+        this.auditTrail = auditTrail;
     }
 
     /** Preview/Download entry point: checks access, then serves the current stored version (creating it if needed). */
     public Mono<ServedVersion> serve(String requesterEmail, UUID evidenceId) {
+        return serve(requesterEmail, evidenceId, RequestMeta.NONE);
+    }
+
+    /** As {@link #serve(String, UUID)}, recording who fetched which signed version in the audit trail. */
+    public Mono<ServedVersion> serve(String requesterEmail, UUID evidenceId, RequestMeta meta) {
         return evidenceRepo.findById(evidenceId)
                 .switchIfEmpty(Mono.error(new InvalidRecord("Evidence not found")))
                 .flatMap(ev -> orgAccessService.resolveGatedMember(ev.getOrganisationId(), requesterEmail)
-                        .flatMap(ctx -> currentVersion(ev, ctx.user().getId())));
+                        .flatMap(ctx -> currentVersion(ev, ctx.user().getId())
+                                .flatMap(served -> auditTrail.record(ev, AuditEventType.SIGNED_COPY_ACCESSED,
+                                                ctx.user(), meta, new AuditTrailService.Detail(served.versionNo(),
+                                                        served.sha256(), "Opened or downloaded the signed copy"))
+                                        .thenReturn(served))));
     }
 
     /**
@@ -199,7 +213,12 @@ public class SignedVersionService {
                     v.setSignatureCount(doc.signatureCount());
                     v.setCreatedBy(actorId);
                     v.setCreatedAt(LocalDateTime.now());
-                    return versionRepo.save(v);
+                    return versionRepo.save(v).flatMap(saved -> auditTrail.record(ev, AuditEventType.VERSION_STORED,
+                                    null, RequestMeta.NONE, new AuditTrailService.Detail(saved.getVersionNo(),
+                                            saved.getSha256(), "Stored signed version v" + saved.getVersionNo()
+                                            + " containing " + saved.getSignatureCount()
+                                            + (saved.getSignatureCount() == 1 ? " signature" : " signatures")))
+                            .thenReturn(saved));
                 }));
     }
 
