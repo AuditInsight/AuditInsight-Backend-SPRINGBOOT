@@ -60,7 +60,8 @@ class EvidenceServiceTest {
         OrgAccessService orgAccessService = new OrgAccessService(
                 userRepo, memberRepo, subscriptionRepo, platformFreeAccessService);
         service = new EvidenceService(evidenceRepo, txnRepo, organisationRepo, orgAccessService,
-                txnService, cloudinaryService, notificationService, signatureRepo, auditTrail);
+                txnService, cloudinaryService, notificationService, signatureRepo, auditTrail,
+                new SigningModeService(new DocumentConversionService("", 90)));
         lenient().when(auditTrail.record(any(), any(), any(), any(), any())).thenReturn(Mono.empty());
         lenient().when(platformFreeAccessService.isEnabled()).thenReturn(Mono.just(false));
         lenient().when(organisationRepo.findById(ORG_ID))

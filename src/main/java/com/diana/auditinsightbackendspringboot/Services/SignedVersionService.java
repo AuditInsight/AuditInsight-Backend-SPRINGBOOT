@@ -46,6 +46,7 @@ public class SignedVersionService {
     private final CloudinaryService cloudinaryService;
     private final OrgAccessService orgAccessService;
     private final AuditTrailService auditTrail;
+    private final SigningModeService signingMode;
 
     public SignedVersionService(EvidenceRepository evidenceRepo,
                                 EvidenceSignatureRepository signatureRepo,
@@ -53,7 +54,8 @@ public class SignedVersionService {
                                 SignedDocumentService signedDocumentService,
                                 CloudinaryService cloudinaryService,
                                 OrgAccessService orgAccessService,
-                                AuditTrailService auditTrail) {
+                                AuditTrailService auditTrail,
+                                SigningModeService signingMode) {
         this.evidenceRepo = evidenceRepo;
         this.signatureRepo = signatureRepo;
         this.versionRepo = versionRepo;
@@ -61,6 +63,7 @@ public class SignedVersionService {
         this.cloudinaryService = cloudinaryService;
         this.orgAccessService = orgAccessService;
         this.auditTrail = auditTrail;
+        this.signingMode = signingMode;
     }
 
     /** Preview/Download entry point: checks access, then serves the current stored version (creating it if needed). */
@@ -107,7 +110,7 @@ public class SignedVersionService {
                         return Mono.error(new InvalidRecord(
                                 "This document has not been signed yet, so there is no signed version to show"));
                     }
-                    return versionRepo.findFirstByEvidenceIdOrderByVersionNoDesc(ev.getId())
+                    return latestUsable(ev)
                             .filter(v -> v.getSignatureCount() >= count)
                             .flatMap(this::load)
                             .switchIfEmpty(Mono.defer(() -> createVersion(ev, actorId)));
@@ -118,22 +121,26 @@ public class SignedVersionService {
     private Mono<EvidenceDocumentVersion> latestCoveringOrCreate(Evidence ev, Long actorId) {
         return signatureRepo.countByEvidenceId(ev.getId())
                 .defaultIfEmpty(0L)
-                .flatMap(count -> versionRepo.findFirstByEvidenceIdOrderByVersionNoDesc(ev.getId())
+                .flatMap(count -> latestUsable(ev)
                         .filter(v -> v.getSignatureCount() >= count))
                 .switchIfEmpty(Mono.defer(() -> createVersion(ev, actorId)
                         .flatMap(served -> versionRepo.findById(served.versionId()))));
     }
 
     /**
-     * The next rendition. PDFs and images build on the latest stored version (or version 0 when there is none) and
-     * stamp only the signatures it doesn't contain yet — a version with signature_count k holds the first k
-     * signatures in signing order — so earlier stamps never move. Word/Excel certificates are re-rendered whole.
+     * The next rendition. Documents signed on the page (PDFs, images, and Word/Excel via their PDF conversion) build
+     * on the latest stored version (or version 0 when there is none) and stamp only the signatures it doesn't
+     * contain yet — a version with signature_count k holds the first k signatures in signing order — so earlier
+     * stamps never move. Signature certificates are re-rendered whole.
      */
     private Mono<SignedDocumentService.SignedDocument> renderNext(Evidence ev) {
-        if (!SignedDocumentService.isStampable(ev.getFileType())) {
-            return signedDocumentService.renderSigned(ev);
-        }
-        return versionRepo.findFirstByEvidenceIdOrderByVersionNoDesc(ev.getId())
+        return signingMode.isPlaceable(ev)
+                ? renderOnPage(ev)
+                : signedDocumentService.renderSigned(ev);
+    }
+
+    private Mono<SignedDocumentService.SignedDocument> renderOnPage(Evidence ev) {
+        return latestUsable(ev)
                 .flatMap(latest -> load(latest).map(served -> new Base(served.bytes(), latest.getSignatureCount())))
                 .switchIfEmpty(Mono.defer(() -> signedDocumentService.baseDocument(ev).map(bytes -> new Base(bytes, 0))))
                 .flatMap(base -> signedDocumentService.stampOnto(ev, base.bytes(), base.signaturesIncluded()));
@@ -143,22 +150,30 @@ public class SignedVersionService {
 
     /**
      * The exact document a signer should place their signature on: the current signed version, or version 0 (the
-     * original PDF, or the image on its A4 page) when nobody has signed yet. Its SHA-256 is sent back with the
-     * signature as a record of what the signer saw.
+     * original PDF, the image on its A4 page, or a Word/Excel file's PDF conversion) when nobody has signed yet. Its
+     * SHA-256 is sent back with the signature as a record of what the signer saw.
      */
     public Mono<ServedVersion> signingBase(String requesterEmail, UUID evidenceId) {
         return evidenceRepo.findById(evidenceId)
                 .switchIfEmpty(Mono.error(new InvalidRecord("Evidence not found")))
                 .flatMap(ev -> orgAccessService.resolveGatedMember(ev.getOrganisationId(), requesterEmail)
-                        .filter(ctx -> SignedDocumentService.isStampable(ev.getFileType()))
-                        .switchIfEmpty(Mono.error(new InvalidRecord("Word and Excel files can't have a signature "
-                                + "placed on them; sign them to get a signature certificate")))
+                        .filter(ctx -> signingMode.isPlaceable(ev))
+                        .switchIfEmpty(Mono.error(new InvalidRecord("This document is signed with a signature "
+                                + "certificate, so a signature can't be placed on its pages")))
                         .flatMap(ctx -> signatureRepo.countByEvidenceId(ev.getId())
                                 .defaultIfEmpty(0L)
                                 .flatMap(count -> count > 0
                                         ? currentVersion(ev, ctx.user().getId())
                                         : signedDocumentService.baseDocument(ev).map(bytes -> new ServedVersion(
                                                 null, 0, sha256Hex(bytes), ev.getDocumentName(), bytes)))));
+    }
+
+    /**
+     * The latest stored version of the kind this document produces now. A Word/Excel document that moved from
+     * certificates to on-page signing ignores its old certificates here (they stay in the history).
+     */
+    private Mono<EvidenceDocumentVersion> latestUsable(Evidence ev) {
+        return versionRepo.findFirstByEvidenceIdAndRenditionOrderByVersionNoDesc(ev.getId(), signingMode.renditionFor(ev));
     }
 
     /** Fetches a stored version's bytes and checks they still match the recorded SHA-256. */
@@ -199,7 +214,10 @@ public class SignedVersionService {
                 .map(Optional::of)
                 .defaultIfEmpty(Optional.empty())
                 .flatMap(latest -> {
-                    if (latest.isPresent() && latest.get().getSignatureCount() >= doc.signatureCount()) {
+                    String rendition = doc.certificate() ? EvidenceDocumentVersion.RENDITION_CERTIFICATE
+                            : EvidenceDocumentVersion.RENDITION_DOCUMENT;
+                    if (latest.isPresent() && latest.get().getSignatureCount() >= doc.signatureCount()
+                            && rendition.equals(latest.get().getRendition())) {
                         return Mono.just(latest.get());
                     }
                     EvidenceDocumentVersion v = new EvidenceDocumentVersion();
@@ -211,6 +229,7 @@ public class SignedVersionService {
                     v.setSha256(sha256Hex(doc.bytes()));
                     v.setSizeBytes((long) doc.bytes().length);
                     v.setSignatureCount(doc.signatureCount());
+                    v.setRendition(rendition);
                     v.setCreatedBy(actorId);
                     v.setCreatedAt(LocalDateTime.now());
                     return versionRepo.save(v).flatMap(saved -> auditTrail.record(ev, AuditEventType.VERSION_STORED,

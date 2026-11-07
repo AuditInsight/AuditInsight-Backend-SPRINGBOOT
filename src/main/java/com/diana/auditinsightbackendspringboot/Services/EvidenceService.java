@@ -37,6 +37,7 @@ public class EvidenceService {
     private final NotificationService notificationService;
     private final EvidenceSignatureRepository signatureRepo;
     private final AuditTrailService auditTrail;
+    private final SigningModeService signingMode;
 
     public EvidenceService(EvidenceRepository evidenceRepo,
                            TransactionRepository txnRepo,
@@ -46,7 +47,8 @@ public class EvidenceService {
                            CloudinaryService cloudinaryService,
                            NotificationService notificationService,
                            EvidenceSignatureRepository signatureRepo,
-                           AuditTrailService auditTrail) {
+                           AuditTrailService auditTrail,
+                           SigningModeService signingMode) {
         this.evidenceRepo = evidenceRepo;
         this.txnRepo = txnRepo;
         this.organisationRepo = organisationRepo;
@@ -56,6 +58,7 @@ public class EvidenceService {
         this.notificationService = notificationService;
         this.signatureRepo = signatureRepo;
         this.auditTrail = auditTrail;
+        this.signingMode = signingMode;
     }
 
 
@@ -112,6 +115,7 @@ public class EvidenceService {
         r.setUploadedBy(e.getUploadedBy());
         r.setUploadedAt(e.getUploadedAt());
         r.setSignatureCount((int) signatureCount);
+        r.setPlaceable(signingMode.isPlaceable(e));
         return r;
     }
 

@@ -58,7 +58,11 @@ class SignedVersionServiceTest {
     @BeforeEach
     void setUp() {
         service = new SignedVersionService(evidenceRepo, signatureRepo, versionRepo,
-                signedDocumentService, cloudinaryService, orgAccessService, auditTrail);
+                signedDocumentService, cloudinaryService, orgAccessService, auditTrail,
+                new SigningModeService(new DocumentConversionService("", 90)));
+        // Route the "latest of this kind" lookup through the plain latest-version stub each test sets up.
+        lenient().when(versionRepo.findFirstByEvidenceIdAndRenditionOrderByVersionNoDesc(any(), any()))
+                .thenAnswer(inv -> versionRepo.findFirstByEvidenceIdOrderByVersionNoDesc(inv.getArgument(0)));
         lenient().when(auditTrail.record(any(), any(), any(), any(), any())).thenReturn(Mono.empty());
 
         evidence = new Evidence();
@@ -285,11 +289,11 @@ class SignedVersionServiceTest {
     }
 
     @Test
-    void signingBase_excelDocument_isRejected() {
+    void signingBase_excelDocumentWithoutConverter_isRejected() {
         evidence.setFileType("xlsx");
 
         StepVerifier.create(service.signingBase(EMAIL, evidenceId))
-                .expectErrorMatches(e -> e instanceof InvalidRecord && e.getMessage().contains("Word and Excel"))
+                .expectErrorMatches(e -> e instanceof InvalidRecord && e.getMessage().contains("signature certificate"))
                 .verify();
     }
 
@@ -300,7 +304,7 @@ class SignedVersionServiceTest {
     }
 
     private static SignedDocumentService.SignedDocument rendered(byte[] pdf, int signatureCount) {
-        return new SignedDocumentService.SignedDocument(pdf, "contract-signed.pdf", "application/pdf", signatureCount);
+        return new SignedDocumentService.SignedDocument(pdf, "contract-signed.pdf", "application/pdf", signatureCount, false);
     }
 
     private EvidenceDocumentVersion version(int versionNo, int signatureCount, byte[] content) {

@@ -51,7 +51,7 @@ class TransactionServiceTest {
         OrgAccessService orgAccessService = new OrgAccessService(
                 userRepo, memberRepo, subscriptionRepo, platformFreeAccessService);
         service = new TransactionService(txnRepo, evidenceRepo, reviewRepo, organisationRepo, orgAccessService,
-                userRepo, notificationService, signatureRepo);
+                userRepo, notificationService, signatureRepo, new SigningModeService(new DocumentConversionService("", 90)));
         lenient().when(platformFreeAccessService.isEnabled()).thenReturn(Mono.just(false));
         lenient().when(organisationRepo.findById(ORG_ID))
                 .thenReturn(Mono.just(organisation(ORG_ID, OrganisationType.PRIVATE)));

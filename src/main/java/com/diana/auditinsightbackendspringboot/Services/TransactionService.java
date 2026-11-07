@@ -27,6 +27,7 @@ public class TransactionService {
     private final UserRepository userRepo;
     private final NotificationService notificationService;
     private final EvidenceSignatureRepository signatureRepo;
+    private final SigningModeService signingMode;
 
     public TransactionService(TransactionRepository txnRepo,
                               EvidenceRepository evidenceRepo,
@@ -35,7 +36,8 @@ public class TransactionService {
                               OrgAccessService orgAccessService,
                               UserRepository userRepo,
                               NotificationService notificationService,
-                              EvidenceSignatureRepository signatureRepo) {
+                              EvidenceSignatureRepository signatureRepo,
+                              SigningModeService signingMode) {
         this.txnRepo = txnRepo;
         this.evidenceRepo = evidenceRepo;
         this.reviewRepo = reviewRepo;
@@ -44,6 +46,7 @@ public class TransactionService {
         this.userRepo = userRepo;
         this.notificationService = notificationService;
         this.signatureRepo = signatureRepo;
+        this.signingMode = signingMode;
     }
 
 
@@ -162,6 +165,7 @@ public class TransactionService {
                                     er.setUploadedBy(e.getUploadedBy());
                                     er.setUploadedAt(e.getUploadedAt());
                                     er.setSignatureCount(signatureCounts.getOrDefault(e.getId(), 0L).intValue());
+                                    er.setPlaceable(signingMode.isPlaceable(e));
                                     return er;
                                 })
                                 .collectList()

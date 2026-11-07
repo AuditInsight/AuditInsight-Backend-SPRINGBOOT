@@ -22,4 +22,7 @@ public class EvidenceResponse {
     private LocalDateTime uploadedAt;
     // How many people have signed this document; 0 means Preview/Download should use the original file.
     private int signatureCount;
+    // True when the document is signed on the page (PDF, image, or Word/Excel via PDF conversion); false when
+    // signing produces a separate signature certificate.
+    private boolean placeable;
 }
