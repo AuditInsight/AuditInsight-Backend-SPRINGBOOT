@@ -57,6 +57,7 @@ public class SignatureService {
     private final SignedVersionService signedVersionService;
     private final EvidenceSignaturePlacementRepository placementRepo;
     private final AuditTrailService auditTrail;
+    private final SigningModeService signingMode;
 
     public SignatureService(EvidenceRepository evidenceRepo,
                             EvidenceSignatureRepository signatureRepo,
@@ -67,7 +68,8 @@ public class SignatureService {
                             EmailService emailService,
                             SignedVersionService signedVersionService,
                             EvidenceSignaturePlacementRepository placementRepo,
-                            AuditTrailService auditTrail) {
+                            AuditTrailService auditTrail,
+                            SigningModeService signingMode) {
         this.evidenceRepo = evidenceRepo;
         this.signatureRepo = signatureRepo;
         this.requestRepo = requestRepo;
@@ -78,6 +80,7 @@ public class SignatureService {
         this.signedVersionService = signedVersionService;
         this.placementRepo = placementRepo;
         this.auditTrail = auditTrail;
+        this.signingMode = signingMode;
     }
 
     private static String blankToNull(String v) {
@@ -115,9 +118,9 @@ public class SignatureService {
         return findEvidence(evidenceId).flatMap(ev ->
                 orgAccessService.resolveGatedMember(ev.getOrganisationId(), email).flatMap(ctx -> {
                     User user = ctx.user();
-                    if (!placements.isEmpty() && !SignedDocumentService.isStampable(ev.getFileType())) {
-                        return Mono.<SignatureResponse>error(new InvalidRecord("Word and Excel files can't have a "
-                                + "signature placed on them; sign without choosing a position to get a signature certificate"));
+                    if (!placements.isEmpty() && !signingMode.isPlaceable(ev)) {
+                        return Mono.<SignatureResponse>error(new InvalidRecord("This document is signed with a "
+                                + "signature certificate, so sign it without choosing a position"));
                     }
                     return signatureRepo.findByEvidenceIdAndSignerId(evidenceId, user.getId())
                             .flatMap(existing -> Mono.<SignatureResponse>error(

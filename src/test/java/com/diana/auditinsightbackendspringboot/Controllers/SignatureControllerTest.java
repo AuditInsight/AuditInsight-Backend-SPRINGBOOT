@@ -1,7 +1,9 @@
 package com.diana.auditinsightbackendspringboot.Controllers;
 
 import com.diana.auditinsightbackendspringboot.Services.SignatureService;
+import com.diana.auditinsightbackendspringboot.Services.DocumentConversionService;
 import com.diana.auditinsightbackendspringboot.Services.SignedVersionService;
+import com.diana.auditinsightbackendspringboot.Services.SigningModeService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -43,7 +45,8 @@ class SignatureControllerTest {
         when(signedVersionService.serve(eq("signer@test.com"), eq(evidenceId), any())).thenReturn(Mono.just(
                 new SignedVersionService.ServedVersion(UUID.randomUUID(), 3, sha, "contract-signed.pdf", pdf)));
 
-        ResponseEntity<byte[]> response = new SignatureController(signatureService, signedVersionService)
+        ResponseEntity<byte[]> response = new SignatureController(signatureService, signedVersionService,
+                new SigningModeService(new DocumentConversionService("", 90)))
                 .downloadSigned(auth, evidenceId, MockServerHttpRequest.get("/").build()).block();
 
         HttpHeaders headers = response.getHeaders();

@@ -51,4 +51,11 @@ public class Evidence {
     // SHA-256 of the original upload (version 0); null for documents uploaded before integrity tracking until first fetched.
     @Column("original_sha256")
     private String originalSha256;
+
+    // Word/Excel only: the PDF conversion signers place signatures on, and its SHA-256 (null until first converted).
+    @Column("pdf_rendition_url")
+    private String pdfRenditionUrl;
+
+    @Column("pdf_rendition_sha256")
+    private String pdfRenditionSha256;
 }

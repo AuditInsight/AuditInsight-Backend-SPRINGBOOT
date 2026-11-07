@@ -48,4 +48,11 @@ public class EvidenceDocumentVersion {
 
     @Column("created_at")
     private LocalDateTime createdAt;
+
+    // DOCUMENT (signatures stamped on the document) or CERTIFICATE (standalone signature certificate).
+    @Column("rendition")
+    private String rendition = RENDITION_DOCUMENT;
+
+    public static final String RENDITION_DOCUMENT = "DOCUMENT";
+    public static final String RENDITION_CERTIFICATE = "CERTIFICATE";
 }

@@ -8,6 +8,7 @@ import com.diana.auditinsightbackendspringboot.DTOs.SignatureRequestResponse;
 import com.diana.auditinsightbackendspringboot.DTOs.SignatureResponse;
 import com.diana.auditinsightbackendspringboot.Services.SignatureService;
 import com.diana.auditinsightbackendspringboot.Services.SignedVersionService;
+import com.diana.auditinsightbackendspringboot.Services.SigningModeService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -24,7 +25,9 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Stream;
 
 @RestController
 @RequestMapping("/api")
@@ -37,10 +40,13 @@ public class SignatureController {
 
     private final SignatureService signatureService;
     private final SignedVersionService signedVersionService;
+    private final SigningModeService signingMode;
 
-    public SignatureController(SignatureService signatureService, SignedVersionService signedVersionService) {
+    public SignatureController(SignatureService signatureService, SignedVersionService signedVersionService,
+                               SigningModeService signingMode) {
         this.signatureService = signatureService;
         this.signedVersionService = signedVersionService;
+        this.signingMode = signingMode;
     }
 
     @PostMapping("/evidence/{evidenceId}/signatures")
@@ -122,6 +128,18 @@ public class SignatureController {
                         .header(HEADER_SHA256, doc.sha256())
                         .header(HttpHeaders.ACCESS_CONTROL_EXPOSE_HEADERS, String.join(", ", HEADER_VERSION, HEADER_SHA256))
                         .body(doc.bytes()));
+    }
+
+    @GetMapping("/signing/capabilities")
+    @Operation(summary = "What can be signed on the page",
+            description = "Tells the app, before upload, which file types are signed by placing the signature on the "
+                    + "page. Word/Excel are included only when document conversion is configured; otherwise they are "
+                    + "signed with a separate signature certificate.")
+    public Mono<Map<String, Object>> signingCapabilities() {
+        List<String> placeable = Stream.of("pdf", "png", "jpg", "jpeg", "docx", "xlsx", "xls")
+                .filter(signingMode::placeableType).toList();
+        return Mono.just(Map.of("placeableFileTypes", placeable,
+                "officeConversion", signingMode.placeableType("docx")));
     }
 
     @GetMapping("/signature-requests/pending")

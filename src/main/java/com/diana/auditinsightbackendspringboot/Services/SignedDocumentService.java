@@ -4,6 +4,7 @@ import com.diana.auditinsightbackendspringboot.Exceptions.Custom.InvalidRecord;
 import com.diana.auditinsightbackendspringboot.Models.Evidence;
 import com.diana.auditinsightbackendspringboot.Models.EvidenceSignature;
 import com.diana.auditinsightbackendspringboot.Models.EvidenceSignaturePlacement;
+import com.diana.auditinsightbackendspringboot.Repositories.EvidenceRepository;
 import com.diana.auditinsightbackendspringboot.Repositories.EvidenceSignaturePlacementRepository;
 import com.diana.auditinsightbackendspringboot.Repositories.EvidenceSignatureRepository;
 import com.diana.auditinsightbackendspringboot.Repositories.UserRepository;
@@ -50,7 +51,8 @@ import java.util.UUID;
 public class SignedDocumentService {
 
     /** A freshly rendered signed document; {@code signatureCount} is how many signatures it contains. */
-    public record SignedDocument(byte[] bytes, String fileName, String contentType, int signatureCount) {}
+    public record SignedDocument(byte[] bytes, String fileName, String contentType, int signatureCount,
+                                 boolean certificate) {}
 
     private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm 'UTC'");
     private static final String PNG_DATA_URL_PREFIX = "data:image/png;base64,";
@@ -65,15 +67,21 @@ public class SignedDocumentService {
     private final EvidenceSignaturePlacementRepository placementRepo;
     private final UserRepository userRepo;
     private final CloudinaryService cloudinaryService;
+    private final DocumentConversionService conversionService;
+    private final EvidenceRepository evidenceRepo;
 
     public SignedDocumentService(EvidenceSignatureRepository signatureRepo,
                                  EvidenceSignaturePlacementRepository placementRepo,
                                  UserRepository userRepo,
-                                 CloudinaryService cloudinaryService) {
+                                 CloudinaryService cloudinaryService,
+                                 DocumentConversionService conversionService,
+                                 EvidenceRepository evidenceRepo) {
         this.signatureRepo = signatureRepo;
         this.placementRepo = placementRepo;
         this.userRepo = userRepo;
         this.cloudinaryService = cloudinaryService;
+        this.conversionService = conversionService;
+        this.evidenceRepo = evidenceRepo;
     }
 
     /** One signer as printed on the document; {@code placements} is empty when they didn't choose a position. */
@@ -87,10 +95,14 @@ public class SignedDocumentService {
     }
 
     /**
-     * Version 0 of a stampable document as a PDF — the page geometry signers place signatures on. A PDF is the
-     * original file unchanged; an image is put on its own A4 page (always the same layout, so placements stay put).
+     * Version 0 of a document as a PDF — the page geometry signers place signatures on. A PDF is the original file
+     * unchanged; an image is put on its own A4 page (always the same layout, so placements stay put); a Word/Excel
+     * file is its PDF conversion, made once and stored so every signer works on exactly the same pages.
      */
     public Mono<byte[]> baseDocument(Evidence ev) {
+        if (DocumentConversionService.isOfficeType(ev.getFileType()) && conversionService.isEnabled()) {
+            return officeRendition(ev);
+        }
         if (!isStampable(ev.getFileType())) {
             return Mono.error(new InvalidRecord(
                     "Word and Excel files can't have a signature placed on them; sign them to get a signature certificate"));
@@ -105,6 +117,42 @@ public class SignedDocumentService {
                         return out.toByteArray();
                     }
                 }).subscribeOn(Schedulers.boundedElastic()));
+    }
+
+    /**
+     * The stored PDF conversion of a Word/Excel document, converting and storing it on first use. If two requests
+     * convert at the same time, only the first conversion is recorded and the other request uses that one.
+     */
+    private Mono<byte[]> officeRendition(Evidence ev) {
+        if (ev.getPdfRenditionUrl() != null) {
+            return downloadVerified(ev.getPdfRenditionUrl(), ev.getPdfRenditionSha256());
+        }
+        // LibreOffice picks the format from the extension, and document names are free text without one.
+        String conversionName = "document." + ev.getFileType().toLowerCase();
+        return download(ev.getFileUpload())
+                .flatMap(original -> conversionService.convertToPdf(original, conversionName))
+                .flatMap(pdf -> {
+                    String sha = SignedVersionService.sha256Hex(pdf);
+                    return cloudinaryService.upload(pdf, ev.getOrganisationId() + "/renditions", "pdf")
+                            .flatMap(url -> evidenceRepo.setPdfRenditionIfAbsent(ev.getId(), url, sha))
+                            .flatMap(updated -> {
+                                if (updated > 0) {
+                                    ev.setPdfRenditionSha256(sha);
+                                    return Mono.just(pdf);
+                                }
+                                return evidenceRepo.findById(ev.getId())
+                                        .flatMap(fresh -> downloadVerified(fresh.getPdfRenditionUrl(),
+                                                fresh.getPdfRenditionSha256()));
+                            });
+                });
+    }
+
+    private Mono<byte[]> downloadVerified(String url, String expectedSha256) {
+        return download(url).flatMap(bytes -> expectedSha256 == null
+                || expectedSha256.equals(SignedVersionService.sha256Hex(bytes))
+                ? Mono.just(bytes)
+                : Mono.error(new InvalidRecord(
+                        "The stored PDF conversion failed its integrity check. Please contact support.")));
     }
 
     /**
@@ -141,7 +189,7 @@ public class SignedDocumentService {
                     ByteArrayOutputStream out = new ByteArrayOutputStream();
                     doc.save(out);
                     return new SignedDocument(out.toByteArray(), stripExtension(ev.getDocumentName()) + "-signed.pdf",
-                            "application/pdf", signers.size());
+                            "application/pdf", signers.size(), false);
                 }
             }).subscribeOn(Schedulers.boundedElastic());
         });
@@ -205,7 +253,7 @@ public class SignedDocumentService {
                 ByteArrayOutputStream out = new ByteArrayOutputStream();
                 doc.save(out);
                 return new SignedDocument(out.toByteArray(), stripExtension(ev.getDocumentName()) + "-signatures.pdf",
-                        "application/pdf", signers.size());
+                        "application/pdf", signers.size(), true);
             }
         }).subscribeOn(Schedulers.boundedElastic());
     }

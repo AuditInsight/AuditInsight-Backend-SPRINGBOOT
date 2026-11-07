@@ -1,9 +1,11 @@
 package com.diana.auditinsightbackendspringboot.Services;
 
+import com.diana.auditinsightbackendspringboot.Exceptions.Custom.InvalidRecord;
 import com.diana.auditinsightbackendspringboot.Models.Evidence;
 import com.diana.auditinsightbackendspringboot.Models.EvidenceSignature;
 import com.diana.auditinsightbackendspringboot.Models.EvidenceSignaturePlacement;
 import com.diana.auditinsightbackendspringboot.Models.User;
+import com.diana.auditinsightbackendspringboot.Repositories.EvidenceRepository;
 import com.diana.auditinsightbackendspringboot.Repositories.EvidenceSignaturePlacementRepository;
 import com.diana.auditinsightbackendspringboot.Repositories.EvidenceSignatureRepository;
 import com.diana.auditinsightbackendspringboot.Repositories.UserRepository;
@@ -18,6 +20,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.test.StepVerifier;
 
 import javax.imageio.ImageIO;
 import java.awt.geom.Rectangle2D;
@@ -34,6 +37,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class SignedDocumentServiceTest {
@@ -44,12 +49,15 @@ class SignedDocumentServiceTest {
     private final EvidenceSignaturePlacementRepository placementRepo = mock(EvidenceSignaturePlacementRepository.class);
     private final UserRepository userRepo = mock(UserRepository.class);
     private final CloudinaryService cloudinaryService = mock(CloudinaryService.class);
+    private final DocumentConversionService conversionService = mock(DocumentConversionService.class);
+    private final EvidenceRepository evidenceRepo = mock(EvidenceRepository.class);
     private SignedDocumentService service;
     private Evidence evidence;
 
     @BeforeEach
     void setUp() {
-        service = new SignedDocumentService(signatureRepo, placementRepo, userRepo, cloudinaryService);
+        service = new SignedDocumentService(signatureRepo, placementRepo, userRepo, cloudinaryService,
+                conversionService, evidenceRepo);
         evidence = new Evidence();
         evidence.setId(UUID.randomUUID());
         evidence.setOrganisationId(UUID.randomUUID());
@@ -186,6 +194,83 @@ class SignedDocumentServiceTest {
         when(cloudinaryService.downloadOriginal(any())).thenReturn(Mono.just(original));
 
         assertEquals(original, service.baseDocument(evidence).block());
+    }
+
+    // ── Word / Excel ─────────────────────────────────────────────────────────────
+
+    @Test
+    void baseDocument_wordWithoutConverter_isRejected() {
+        evidence.setFileType("docx");
+        when(conversionService.isEnabled()).thenReturn(false);
+
+        StepVerifier.create(service.baseDocument(evidence)).expectError(InvalidRecord.class).verify();
+    }
+
+    @Test
+    void baseDocument_wordFirstTime_isConvertedOnceAndTheConversionStored() {
+        byte[] word = "word-bytes".getBytes();
+        byte[] converted = blankA4(2);
+        evidence.setFileType("docx");
+        evidence.setDocumentName("Board resolution"); // no extension: the converter must still get one
+        when(conversionService.isEnabled()).thenReturn(true);
+        when(cloudinaryService.downloadOriginal(evidence.getFileUpload())).thenReturn(Mono.just(word));
+        when(conversionService.convertToPdf(word, "document.docx")).thenReturn(Mono.just(converted));
+        when(cloudinaryService.upload(converted, evidence.getOrganisationId() + "/renditions", "pdf"))
+                .thenReturn(Mono.just("https://res.cloudinary.com/demo/raw/upload/v1/renditions/a.pdf"));
+        when(evidenceRepo.setPdfRenditionIfAbsent(evidence.getId(),
+                "https://res.cloudinary.com/demo/raw/upload/v1/renditions/a.pdf",
+                SignedVersionService.sha256Hex(converted))).thenReturn(Mono.just(1));
+
+        assertEquals(converted, service.baseDocument(evidence).block());
+    }
+
+    @Test
+    void baseDocument_wordAlreadyConverted_reusesTheStoredConversion() {
+        byte[] converted = blankA4(1);
+        String url = "https://res.cloudinary.com/demo/raw/upload/v1/renditions/a.pdf";
+        evidence.setFileType("docx");
+        evidence.setPdfRenditionUrl(url);
+        evidence.setPdfRenditionSha256(SignedVersionService.sha256Hex(converted));
+        when(conversionService.isEnabled()).thenReturn(true);
+        when(cloudinaryService.downloadOriginal(url)).thenReturn(Mono.just(converted));
+
+        assertEquals(converted, service.baseDocument(evidence).block());
+        verify(conversionService, never()).convertToPdf(any(), any());
+    }
+
+    @Test
+    void baseDocument_storedConversionChanged_failsIntegrityCheck() {
+        String url = "https://res.cloudinary.com/demo/raw/upload/v1/renditions/a.pdf";
+        evidence.setFileType("docx");
+        evidence.setPdfRenditionUrl(url);
+        evidence.setPdfRenditionSha256(SignedVersionService.sha256Hex(blankA4(1)));
+        when(conversionService.isEnabled()).thenReturn(true);
+        when(cloudinaryService.downloadOriginal(url)).thenReturn(Mono.just(blankA4(3)));
+
+        StepVerifier.create(service.baseDocument(evidence))
+                .expectErrorMatches(e -> e instanceof InvalidRecord && e.getMessage().contains("integrity"))
+                .verify();
+    }
+
+    @Test
+    void baseDocument_twoConversionsAtOnce_bothUseTheOneThatWasRecorded() {
+        byte[] word = "word-bytes".getBytes();
+        byte[] ours = blankA4(1);
+        byte[] theirs = blankA4(2);
+        String theirUrl = "https://res.cloudinary.com/demo/raw/upload/v1/renditions/theirs.pdf";
+        evidence.setFileType("xlsx");
+        when(conversionService.isEnabled()).thenReturn(true);
+        when(cloudinaryService.downloadOriginal(evidence.getFileUpload())).thenReturn(Mono.just(word));
+        when(conversionService.convertToPdf(word, "document.xlsx")).thenReturn(Mono.just(ours));
+        when(cloudinaryService.upload(any(), any(), any())).thenReturn(Mono.just("https://res.cloudinary.com/x"));
+        when(evidenceRepo.setPdfRenditionIfAbsent(any(), any(), any())).thenReturn(Mono.just(0)); // lost the race
+        Evidence fresh = new Evidence();
+        fresh.setPdfRenditionUrl(theirUrl);
+        fresh.setPdfRenditionSha256(SignedVersionService.sha256Hex(theirs));
+        when(evidenceRepo.findById(evidence.getId())).thenReturn(Mono.just(fresh));
+        when(cloudinaryService.downloadOriginal(theirUrl)).thenReturn(Mono.just(theirs));
+
+        assertEquals(theirs, service.baseDocument(evidence).block());
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────────
