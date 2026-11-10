@@ -5,6 +5,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.io.buffer.DataBuffer;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.security.authentication.ReactiveAuthenticationManager;
@@ -68,6 +69,9 @@ public class SecurityConfig {
                                 "/v3/api-docs/**",
                                 "/webjars/**"
                         ).permitAll()
+                        // Plan prices are shown on the public landing page, so anyone may read them.
+                        // Changing them stays under /api/admin/plans (ADMIN only).
+                        .pathMatchers(HttpMethod.GET, "/api/plans").permitAll()
                         .pathMatchers("/api/admin/**").hasRole("ADMIN")
                         .pathMatchers("/api/auditor/**").hasRole("AUDITOR")
                         .pathMatchers("/api/client/**").hasRole("CLIENT")
