@@ -230,6 +230,32 @@ public class EvidenceService {
     }
 
 
+    /**
+     * Edits a document's name and/or notes. The stored file is never touched, so signatures and
+     * integrity fingerprints stay valid. A null field is left as is; a blank note clears it.
+     */
+    public Mono<EvidenceResponse> updateEvidence(UUID evidenceId, String documentName, String notes, String email) {
+        return evidenceRepo.findById(evidenceId)
+                .switchIfEmpty(Mono.error(new InvalidRecord("Evidence not found")))
+                .flatMap(ev -> assertCanUpload(ev.getOrganisationId(), email)
+                        .flatMap(user -> {
+                            if (documentName != null) {
+                                if (documentName.isBlank()) {
+                                    return Mono.error(new InvalidRecord("Document name cannot be empty"));
+                                }
+                                ev.setDocumentName(documentName.trim());
+                            }
+                            if (notes != null) {
+                                ev.setNotes(notes.isBlank() ? null : notes.trim());
+                            }
+                            return evidenceRepo.save(ev);
+                        }))
+                .flatMap(saved -> signatureRepo.countByEvidenceId(evidenceId)
+                        .defaultIfEmpty(0L)
+                        .map(count -> toResponse(saved, count)));
+    }
+
+
     public Flux<EvidenceResponse> listByTransaction(UUID txnId, String email) {
         return txnRepo.findById(txnId)
                 .switchIfEmpty(Mono.error(new InvalidRecord("Transaction not found")))
