@@ -80,6 +80,34 @@ class TransactionServiceTest {
     }
 
     @Test
+    void createTransaction_withNotes_storesAndReturnsThem() {
+        mockActiveMember("client@test.com", 1L, Role.CLIENT);
+        when(txnRepo.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
+        when(notificationService.notifyTransactionCreated(any(), any(), anyString(), anyString()))
+                .thenReturn(Mono.empty());
+        CreateTransactionRequest req = createRequest();
+        req.setNotes("  Paid half upfront  ");
+
+        StepVerifier.create(service.createTransaction("client@test.com", req))
+                .expectNextMatches(r -> "Paid half upfront".equals(r.getNotes()))
+                .verifyComplete();
+    }
+
+    @Test
+    void createTransaction_blankNotes_storedAsNone() {
+        mockActiveMember("client@test.com", 1L, Role.CLIENT);
+        when(txnRepo.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
+        when(notificationService.notifyTransactionCreated(any(), any(), anyString(), anyString()))
+                .thenReturn(Mono.empty());
+        CreateTransactionRequest req = createRequest();
+        req.setNotes("   ");
+
+        StepVerifier.create(service.createTransaction("client@test.com", req))
+                .expectNextMatches(r -> r.getNotes() == null)
+                .verifyComplete();
+    }
+
+    @Test
     void createTransaction_memberUser_succeeds() {
         mockActiveMember("member@test.com", 2L, Role.MEMBER);
         when(txnRepo.save(any())).thenAnswer(inv -> Mono.just(inv.getArgument(0)));

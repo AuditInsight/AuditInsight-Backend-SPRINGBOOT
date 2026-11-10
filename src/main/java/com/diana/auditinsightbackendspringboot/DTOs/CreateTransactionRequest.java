@@ -41,4 +41,7 @@ public class CreateTransactionRequest {
     private String donor;
 
     private String budgetLine;
+
+    /** Optional free-text notes about the transaction. */
+    private String notes;
 }

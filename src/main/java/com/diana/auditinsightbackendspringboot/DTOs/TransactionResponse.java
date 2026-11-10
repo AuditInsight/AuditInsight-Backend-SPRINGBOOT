@@ -25,6 +25,7 @@ public class TransactionResponse {
     private String counterparty;
     private String donor;
     private String budgetLine;
+    private String notes;
     private BigDecimal amount;
     private TransactionType type;
     private PaymentMethod paymentMethod;
