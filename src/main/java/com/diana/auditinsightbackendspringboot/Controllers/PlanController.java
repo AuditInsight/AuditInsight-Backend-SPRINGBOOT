@@ -4,7 +4,6 @@ import com.diana.auditinsightbackendspringboot.DTOs.PlanResponse;
 import com.diana.auditinsightbackendspringboot.Models.PlanPrice;
 import com.diana.auditinsightbackendspringboot.Services.PlanService;
 import io.swagger.v3.oas.annotations.Operation;
-import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -14,7 +13,6 @@ import reactor.core.publisher.Flux;
 @RestController
 @RequestMapping("/api/plans")
 @Tag(name = "Plans", description = "Fixed-price subscription catalog")
-@SecurityRequirement(name = "bearerAuth")
 public class PlanController {
 
     private final PlanService planService;
@@ -25,7 +23,8 @@ public class PlanController {
 
     @GetMapping
     @Operation(summary = "List subscription plans",
-               description = "Lists the 3 fixed-price RWF subscription periods (Monthly/6 Months/Annual).")
+               description = "Lists the 3 fixed-price RWF subscription periods (Monthly/6 Months/Annual). Public — no login needed, " +
+                       "so the landing page can show live prices.")
     public Flux<PlanResponse> list() {
         return planService.listPlans().map(this::toResponse);
     }
