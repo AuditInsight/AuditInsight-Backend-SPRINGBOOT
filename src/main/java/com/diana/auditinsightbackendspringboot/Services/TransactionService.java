@@ -65,6 +65,7 @@ public class TransactionService {
         r.setCounterparty(t.getCounterparty());
         r.setDonor(t.getDonor());
         r.setBudgetLine(t.getBudgetLine());
+        r.setNotes(t.getNotes());
         r.setAmount(t.getAmount());
         r.setType(t.getType());
         r.setPaymentMethod(t.getPaymentMethod());
@@ -117,6 +118,7 @@ public class TransactionService {
                     t.setCounterparty(req.getCounterparty());
                     t.setDonor(req.getDonor());
                     t.setBudgetLine(req.getBudgetLine());
+                    t.setNotes(isBlank(req.getNotes()) ? null : req.getNotes().trim());
                     t.setPaymentMethod(req.getPaymentMethod());
                     t.setStatus(TransactionStatus.PENDING);
                     t.setEvidenceStatus(EvidenceStatus.MISSING);

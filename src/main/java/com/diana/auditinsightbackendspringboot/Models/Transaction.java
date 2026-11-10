@@ -53,6 +53,9 @@ public class Transaction implements Persistable<UUID> {
     @Column("budget_line")
     private String budgetLine;
 
+    @Column("notes")
+    private String notes;
+
     @Column("amount")
     private BigDecimal amount;
 

@@ -90,6 +90,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     counterparty    VARCHAR(255),
     donor           VARCHAR(255),
     budget_line     VARCHAR(255),
+    notes           TEXT,
     amount          NUMERIC(15,2) NOT NULL,
     type            VARCHAR(20)   NOT NULL,
     payment_method  VARCHAR(20)   NOT NULL,
