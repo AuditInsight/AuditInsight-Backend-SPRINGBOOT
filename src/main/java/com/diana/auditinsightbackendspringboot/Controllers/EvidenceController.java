@@ -1,7 +1,9 @@
 package com.diana.auditinsightbackendspringboot.Controllers;
 
 import com.diana.auditinsightbackendspringboot.DTOs.EvidenceResponse;
+import com.diana.auditinsightbackendspringboot.DTOs.UpdateEvidenceRequest;
 import com.diana.auditinsightbackendspringboot.Services.EvidenceService;
+import jakarta.validation.Valid;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -74,6 +76,18 @@ public class EvidenceController {
             Authentication auth,
             @PathVariable UUID evidenceId) {
         return evidenceService.getEvidence(evidenceId, auth.getName())
+                .map(ResponseEntity::ok);
+    }
+
+    @PutMapping("/{evidenceId}")
+    @Operation(summary = "Update evidence",
+               description = "Edits a document's name and/or notes. Omitted fields are unchanged; a blank " +
+                       "note clears it. The file itself cannot be replaced. CLIENT and MEMBER only.")
+    public Mono<ResponseEntity<EvidenceResponse>> updateEvidence(
+            Authentication auth,
+            @PathVariable UUID evidenceId,
+            @Valid @RequestBody UpdateEvidenceRequest request) {
+        return evidenceService.updateEvidence(evidenceId, request.getDocumentName(), request.getNotes(), auth.getName())
                 .map(ResponseEntity::ok);
     }
 

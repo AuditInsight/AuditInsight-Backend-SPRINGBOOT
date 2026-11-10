@@ -378,6 +378,72 @@ class EvidenceServiceTest {
 
     // ──────────────────────────── helpers ────────────────────────────────────
 
+    // ──────────────────────────── updateEvidence ──────────────────────────────
+
+    @Test
+    void updateEvidence_clientUser_updatesNameAndNotes() {
+        mockActiveMember("client@test.com", 1L, Role.CLIENT);
+        when(evidenceRepo.findById(EV_ID)).thenReturn(Mono.just(evidence(EV_ID, TXN_ID)));
+        when(evidenceRepo.save(any(Evidence.class))).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
+        when(signatureRepo.countByEvidenceId(EV_ID)).thenReturn(Mono.just(2L));
+
+        StepVerifier.create(service.updateEvidence(EV_ID, "  Renamed invoice ", " Paid in cash ", "client@test.com"))
+                .assertNext(r -> {
+                    assertEquals("Renamed invoice", r.getDocumentName());
+                    assertEquals("Paid in cash", r.getNotes());
+                    assertEquals(2, r.getSignatureCount());
+                })
+                .verifyComplete();
+    }
+
+    @Test
+    void updateEvidence_nullFieldsLeftUnchanged_blankNoteCleared() {
+        mockActiveMember("client@test.com", 1L, Role.CLIENT);
+        Evidence ev = evidence(EV_ID, TXN_ID);
+        ev.setNotes("old note");
+        when(evidenceRepo.findById(EV_ID)).thenReturn(Mono.just(ev));
+        when(evidenceRepo.save(any(Evidence.class))).thenAnswer(inv -> Mono.just(inv.getArgument(0)));
+        when(signatureRepo.countByEvidenceId(EV_ID)).thenReturn(Mono.just(0L));
+
+        StepVerifier.create(service.updateEvidence(EV_ID, null, "   ", "client@test.com"))
+                .assertNext(r -> {
+                    assertEquals("Supplier Invoice", r.getDocumentName());
+                    assertEquals(null, r.getNotes());
+                })
+                .verifyComplete();
+    }
+
+    @Test
+    void updateEvidence_blankName_returnsError() {
+        mockActiveMember("client@test.com", 1L, Role.CLIENT);
+        when(evidenceRepo.findById(EV_ID)).thenReturn(Mono.just(evidence(EV_ID, TXN_ID)));
+
+        StepVerifier.create(service.updateEvidence(EV_ID, " ", "note", "client@test.com"))
+                .expectErrorMatches(e -> e instanceof InvalidRecord
+                        && e.getMessage().contains("Document name cannot be empty"))
+                .verify();
+    }
+
+    @Test
+    void updateEvidence_auditorUser_returnsForbidden() {
+        mockActiveMember("auditor@test.com", 3L, Role.AUDITOR);
+        when(evidenceRepo.findById(EV_ID)).thenReturn(Mono.just(evidence(EV_ID, TXN_ID)));
+
+        StepVerifier.create(service.updateEvidence(EV_ID, null, "note", "auditor@test.com"))
+                .expectError(ForbiddenException.class)
+                .verify();
+    }
+
+    @Test
+    void updateEvidence_notFound_returnsError() {
+        when(evidenceRepo.findById(EV_ID)).thenReturn(Mono.empty());
+
+        StepVerifier.create(service.updateEvidence(EV_ID, null, "note", "client@test.com"))
+                .expectErrorMatches(e -> e instanceof InvalidRecord
+                        && e.getMessage().contains("Evidence not found"))
+                .verify();
+    }
+
     private void mockActiveMember(String email, Long userId, Role role) {
         User u = user(userId, email, role);
         when(userRepo.findByUsername(email)).thenReturn(Mono.just(u));
