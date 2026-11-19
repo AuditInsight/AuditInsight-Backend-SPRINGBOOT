@@ -58,6 +58,7 @@ public class SignatureService {
     private final EvidenceSignaturePlacementRepository placementRepo;
     private final AuditTrailService auditTrail;
     private final SigningModeService signingMode;
+    private final SigningVerificationService verification;
 
     public SignatureService(EvidenceRepository evidenceRepo,
                             EvidenceSignatureRepository signatureRepo,
@@ -69,7 +70,8 @@ public class SignatureService {
                             SignedVersionService signedVersionService,
                             EvidenceSignaturePlacementRepository placementRepo,
                             AuditTrailService auditTrail,
-                            SigningModeService signingMode) {
+                            SigningModeService signingMode,
+                            SigningVerificationService verification) {
         this.evidenceRepo = evidenceRepo;
         this.signatureRepo = signatureRepo;
         this.requestRepo = requestRepo;
@@ -81,6 +83,7 @@ public class SignatureService {
         this.placementRepo = placementRepo;
         this.auditTrail = auditTrail;
         this.signingMode = signingMode;
+        this.verification = verification;
     }
 
     private static String blankToNull(String v) {
@@ -125,17 +128,36 @@ public class SignatureService {
                     return signatureRepo.findByEvidenceIdAndSignerId(evidenceId, user.getId())
                             .flatMap(existing -> Mono.<SignatureResponse>error(
                                     new InvalidRecord("You have already signed this document")))
-                            .switchIfEmpty(Mono.defer(() -> persistSignature(ev, user, fullName, title, typedName, image,
-                                            placements, baseSha256, meta)
+                            // Every signature needs a fresh emailed code for this document (email re-verification).
+                            // The code is used up only if the signature is saved; otherwise it is given back.
+                            .switchIfEmpty(Mono.defer(() -> verification.claim(user.getId(), evidenceId,
+                                            body.getVerificationCode())
+                                    .flatMap(verificationId -> persistSignature(ev, user, fullName, title, typedName,
+                                                    image, placements, baseSha256, meta)
+                                            .onErrorResume(e -> verification.release(verificationId)
+                                                    .then(Mono.<SignatureResponse>error(e))))
                                     .flatMap(saved -> auditTrail.record(ev, AuditEventType.SIGNED, user, meta,
                                                     new AuditTrailService.Detail(null, baseSha256, describeSigning(
-                                                            saved.getSignerName(), placements)))
+                                                            saved.getSignerName(), placements)
+                                                            + "; email re-verified with a one-time code"))
                                             .thenReturn(saved))
                                     // Store the new signed version in the background; Preview/Download create it
                                     // on demand if this hasn't finished, so signing never waits on Cloudinary.
                                     .doOnNext(saved -> signedVersionService.createVersionAfterSigning(
                                             ev, saved.getId(), user.getId()))));
                 }));
+    }
+
+    // ── Email re-verification before signing ─────────────────────────────────────
+
+    /** Emails the logged-in member a one-time code that lets them sign this document once. */
+    public Mono<SigningVerificationService.CodeSent> requestVerificationCode(String email, UUID evidenceId) {
+        return findEvidence(evidenceId).flatMap(ev ->
+                orgAccessService.resolveGatedMember(ev.getOrganisationId(), email).flatMap(ctx ->
+                        signatureRepo.findByEvidenceIdAndSignerId(evidenceId, ctx.user().getId())
+                                .flatMap(existing -> Mono.<SigningVerificationService.CodeSent>error(
+                                        new InvalidRecord("You have already signed this document")))
+                                .switchIfEmpty(Mono.defer(() -> verification.sendCode(ctx.user(), ev)))));
     }
 
     /** Audit text for a signature: who signed and where it was put. */
