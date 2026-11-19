@@ -419,6 +419,27 @@ public class EmailService {
         sendEmail(email, requesterName + " asked you to sign " + documentName, html);
     }
 
+    public void sendSigningVerificationEmail(String email, String name, String documentName, String code) {
+        if (email == null) {
+            log.error("Cannot send signing verification email: missing email");
+            return;
+        }
+        String html = String.format("""
+                <html><body style='font-family:Arial,sans-serif;'>
+                  <div style='max-width:600px;margin:auto;padding:20px;border:1px solid #ddd;'>
+                    <h2 style='color:#2c3e50;'>Confirm it's you before signing</h2>
+                    <p>Hello <b>%s</b>,</p>
+                    <p>You are about to sign the document <b>%s</b> on AuditInsight. Enter this code to confirm your email:</p>
+                    <div style='text-align:center;margin:20px;'>
+                      <span style='font-size:2em;letter-spacing:8px;background:#f4f4f4;padding:10px 20px;border-radius:5px;border:1px solid #ccc;'>%s</span>
+                    </div>
+                    <p>This code works for this document only and expires in 10 minutes.</p>
+                    <small>If you are not signing a document right now, do not share this code and consider changing your password.</small>
+                  </div>
+                </body></html>""", escapeHtml(name != null ? name : email), escapeHtml(documentName), code);
+        sendEmail(email, "Your AuditInsight signing code: " + code, html);
+    }
+
     private static String escapeHtml(String s) {
         return s == null ? "" : s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }

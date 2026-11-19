@@ -37,4 +37,9 @@ public class SignEvidenceRequest {
     // audit record of exactly what they saw.
     @Pattern(regexp = "^[0-9a-f]{64}$", message = "baseSha256 must be a lowercase hex SHA-256")
     private String baseSha256;
+
+    // Required: the 6-digit code emailed to the signer for this document (POST .../signatures/verification-code).
+    // Re-verifies the signer's email before every signature.
+    @Pattern(regexp = "^\\s*\\d{6}\\s*$", message = "verificationCode must be the 6-digit code from your email")
+    private String verificationCode;
 }

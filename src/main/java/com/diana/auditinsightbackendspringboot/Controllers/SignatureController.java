@@ -9,6 +9,7 @@ import com.diana.auditinsightbackendspringboot.DTOs.SignatureResponse;
 import com.diana.auditinsightbackendspringboot.Services.SignatureService;
 import com.diana.auditinsightbackendspringboot.Services.SignedVersionService;
 import com.diana.auditinsightbackendspringboot.Services.SigningModeService;
+import com.diana.auditinsightbackendspringboot.Services.SigningVerificationService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -52,7 +53,8 @@ public class SignatureController {
     @PostMapping("/evidence/{evidenceId}/signatures")
     @Operation(summary = "Sign a document",
             description = "Signs the evidence document as the logged-in user. Optional: nobody has to ask you first. " +
-                    "The signer's name and the time are recorded by the server. Any active member of the " +
+                    "Requires verificationCode: a fresh code emailed to the signer for this document via " +
+                    "POST /evidence/{evidenceId}/signatures/verification-code. The signer's name and the time are recorded by the server. Any active member of the " +
                     "organisation (including auditors) can sign; each person can sign a document once. " +
                     "If someone had requested your signature, that request is marked SIGNED.")
     public Mono<ResponseEntity<SignatureResponse>> sign(
@@ -63,6 +65,17 @@ public class SignatureController {
         return signatureService.sign(auth.getName(), evidenceId, body == null ? new SignEvidenceRequest() : body,
                         RequestMeta.from(request))
                 .map(r -> new ResponseEntity<>(r, HttpStatus.CREATED));
+    }
+
+    @PostMapping("/evidence/{evidenceId}/signatures/verification-code")
+    @Operation(summary = "Email me a code to sign this document",
+            description = "Re-verifies the signer's email before signing: sends a 6-digit code to the logged-in " +
+                    "user's email. The code is needed to sign this document once and expires after 10 minutes. " +
+                    "A new code can be requested after 60 seconds; requesting one makes the previous code invalid.")
+    public Mono<ResponseEntity<SigningVerificationService.CodeSent>> requestVerificationCode(
+            Authentication auth,
+            @PathVariable UUID evidenceId) {
+        return signatureService.requestVerificationCode(auth.getName(), evidenceId).map(ResponseEntity::ok);
     }
 
     @GetMapping("/evidence/{evidenceId}/signatures")
