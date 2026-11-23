@@ -213,6 +213,26 @@ class AdminEndpointsSecurityTest {
     }
 
     @Test
+    void paymentsLedger_timesAreSentWithTheirTimeZone() {
+        databaseClient.sql("""
+                        INSERT INTO payments (organisation_id, subscription_type, provider, status, expected_amount,
+                                              received_amount, currency, payer_phone, created_at, resolved_at)
+                        VALUES (:org, 'MONTHLY', 'MOMO', 'SUCCESSFUL', 15000, 15000, 'RWF', '0788123456',
+                                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                        """)
+                .bind("org", organisationId)
+                .fetch().rowsUpdated().block();
+
+        get(adminToken, "/api/admin/payments?organisationId=" + organisationId).expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.items[0].payerPhone").isEqualTo("0788123456")
+                .jsonPath("$.items[0].createdAt").value(v -> org.assertj.core.api.Assertions.assertThat((String) v)
+                        .matches(".*(Z|[+-]\\d{2}:\\d{2})$"))
+                .jsonPath("$.items[0].resolvedAt").value(v -> org.assertj.core.api.Assertions.assertThat((String) v)
+                        .matches(".*(Z|[+-]\\d{2}:\\d{2})$"));
+    }
+
+    @Test
     void paymentsLedger_acceptsFiltersWithATimeZone_andRejectsUnknownStatus() {
         webTestClient.get().uri(b -> b.path("/api/admin/payments")
                         .queryParam("status", "SUCCESSFUL")
