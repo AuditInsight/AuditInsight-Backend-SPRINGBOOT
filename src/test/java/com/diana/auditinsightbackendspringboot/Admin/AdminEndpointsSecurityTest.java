@@ -204,6 +204,55 @@ class AdminEndpointsSecurityTest {
     }
 
     @Test
+    void paymentsLedger_onlyAdminAllowed() {
+        assertForbiddenForNonAdmins(token -> get(token, "/api/admin/payments"));
+        assertForbiddenForNonAdmins(token -> get(token, "/api/admin/payments/totals"));
+        get(adminToken, "/api/admin/payments").expectStatus().isOk()
+                .expectBody().jsonPath("$.items").isArray();
+        get(adminToken, "/api/admin/payments/totals").expectStatus().isOk();
+        assertForbiddenForNonAdmins(token -> get(token, "/api/admin/payments/setup"));
+        get(adminToken, "/api/admin/payments/setup").expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.mobileMoney.tokenSet").isEqualTo(true)
+                .jsonPath("$.mobileMoney.callbackPath").isEqualTo("/api/subscriptions/webhooks/pawapay")
+                .jsonPath("$.problems").isArray();
+    }
+
+    @Test
+    void paymentsLedger_timesAreSentWithTheirTimeZone() {
+        databaseClient.sql("""
+                        INSERT INTO payments (organisation_id, subscription_type, provider, status, expected_amount,
+                                              received_amount, currency, payer_phone, created_at, resolved_at)
+                        VALUES (:org, 'MONTHLY', 'MOMO', 'SUCCESSFUL', 15000, 15000, 'RWF', '0788123456',
+                                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                        """)
+                .bind("org", organisationId)
+                .fetch().rowsUpdated().block();
+
+        get(adminToken, "/api/admin/payments?organisationId=" + organisationId).expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.items[0].payerPhone").isEqualTo("0788123456")
+                .jsonPath("$.items[0].createdAt").value(v -> org.assertj.core.api.Assertions.assertThat((String) v)
+                        .matches(".*(Z|[+-]\\d{2}:\\d{2})$"))
+                .jsonPath("$.items[0].resolvedAt").value(v -> org.assertj.core.api.Assertions.assertThat((String) v)
+                        .matches(".*(Z|[+-]\\d{2}:\\d{2})$"));
+    }
+
+    @Test
+    void paymentsLedger_acceptsFiltersWithATimeZone_andRejectsUnknownStatus() {
+        webTestClient.get().uri(b -> b.path("/api/admin/payments")
+                        .queryParam("status", "SUCCESSFUL")
+                        .queryParam("provider", "MOMO")
+                        .queryParam("from", "{from}")
+                        .queryParam("to", "{to}")
+                        .queryParam("search", "0788")
+                        .build("2026-11-20T00:00:00+02:00", "2026-11-21T00:00:00+02:00"))
+                .header("Authorization", "Bearer " + adminToken).exchange()
+                .expectStatus().isOk();
+        get(adminToken, "/api/admin/payments?status=PAID").expectStatus().isBadRequest();
+    }
+
+    @Test
     void listAuditLog_onlyAdminAllowed() {
         assertForbiddenForNonAdmins(token -> get(token, "/api/admin/audit-log"));
         get(adminToken, "/api/admin/audit-log").expectStatus().isOk();

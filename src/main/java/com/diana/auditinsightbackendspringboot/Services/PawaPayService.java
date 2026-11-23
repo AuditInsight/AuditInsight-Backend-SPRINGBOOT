@@ -59,10 +59,33 @@ public class PawaPayService {
      * created, so the payment must stay PENDING and be checked again rather than marked failed.
      */
     public static class DepositRejectedException extends RuntimeException {
+        /** pawaPay's failureCode (e.g. INVALID_PHONE_NUMBER, AUTHENTICATION_ERROR), when it gave one. */
+        private final String failureCode;
+
         public DepositRejectedException(String message, Throwable cause) {
+            this(message, null, cause);
+        }
+
+        public DepositRejectedException(String message, String failureCode, Throwable cause) {
             super(message, cause);
+            this.failureCode = failureCode;
+        }
+
+        public String getFailureCode() {
+            return failureCode;
+        }
+
+        /** The rejection is our setup's fault (token, account, request format), not the customer's. */
+        public boolean isConfigurationProblem() {
+            return failureCode != null && CONFIGURATION_FAILURE_CODES.contains(failureCode);
         }
     }
+
+    /** Rejections only a fix on our side (Railway settings or the pawaPay account) can cure. */
+    static final java.util.Set<String> CONFIGURATION_FAILURE_CODES = java.util.Set.of(
+            "AUTHENTICATION_ERROR", "AUTHORISATION_ERROR", "INVALID_PROVIDER", "INVALID_CURRENCY",
+            "DEPOSITS_NOT_ALLOWED", "INVALID_INPUT", "MISSING_PARAMETER", "UNSUPPORTED_PARAMETER",
+            "INVALID_PARAMETER", "INVALID_AMOUNT");
 
     public Mono<Void> requestDeposit(UUID depositId, BigDecimal amountRwf, String phoneNumber) {
         return Mono.fromRunnable(() -> doRequestDeposit(depositId, amountRwf, phoneNumber))
@@ -100,7 +123,8 @@ public class PawaPayService {
             response = restTemplate.exchange(baseUrl + "/v2/deposits", HttpMethod.POST,
                     new HttpEntity<>(body, authHeaders()), Map.class);
         } catch (org.springframework.web.client.HttpClientErrorException e) {
-            throw new DepositRejectedException("pawaPay rejected the deposit request: " + e.getStatusCode(), e);
+            throw rejected("pawaPay rejected the deposit request: " + e.getStatusCode(), errorBody(e),
+                    e.getStatusCode().value(), e);
         } catch (Exception e) {
             throw new RuntimeException("pawaPay deposit request failed: " + e.getMessage(), e);
         }
@@ -112,10 +136,42 @@ public class PawaPayService {
 
         String status = String.valueOf(responseBody.get("status"));
         if (!"ACCEPTED".equals(status) && !"DUPLICATE_IGNORED".equals(status)) {
-            Object failure = responseBody.get("failureReason");
-            throw new DepositRejectedException("pawaPay deposit was rejected: " + status
-                    + (failure != null ? " (" + failure + ")" : ""), null);
+            throw rejected("pawaPay deposit was rejected: " + status, responseBody, 200, null);
         }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> errorBody(org.springframework.web.client.HttpClientErrorException e) {
+        try {
+            return e.getResponseBodyAs(Map.class);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    /**
+     * Builds the rejection with pawaPay's failureCode (falling back to the HTTP status for 401/403) and logs setup
+     * problems as errors: a wrong token or account setting fails every payment, so it must be noticed at once.
+     */
+    @SuppressWarnings("unchecked")
+    static DepositRejectedException rejected(String summary, Map<String, Object> body, int httpStatus, Throwable cause) {
+        String code = null;
+        String detail = null;
+        Object failure = body == null ? null : body.get("failureReason");
+        if (failure instanceof Map) {
+            Map<String, Object> f = (Map<String, Object>) failure;
+            code = f.get("failureCode") == null ? null : String.valueOf(f.get("failureCode"));
+            detail = f.get("failureMessage") == null ? null : String.valueOf(f.get("failureMessage"));
+        }
+        if (code == null && httpStatus == 401) code = "AUTHENTICATION_ERROR";
+        if (code == null && httpStatus == 403) code = "AUTHORISATION_ERROR";
+        String message = summary + (code != null ? " (" + code + (detail != null ? ": " + detail : "") + ")" : "");
+        DepositRejectedException e = new DepositRejectedException(message, code, cause);
+        if (e.isConfigurationProblem()) {
+            log.error("pawaPay SETUP PROBLEM — every Mobile Money payment will fail until this is fixed. Check "
+                    + "PAWAPAY_API_TOKEN / PAWAPAY_API_BASE_URL on the server and the pawaPay account: {}", message);
+        }
+        return e;
     }
 
     @SuppressWarnings("unchecked")

@@ -91,7 +91,7 @@ public class AdminOrganisationService {
                                 .map(this::toSubscriptionSummary)
                                 .collectList(),
                         paymentRepository.findAllByOrganisationIdOrderByCreatedAtDesc(organisationId)
-                                .map(this::toPaymentResponse)
+                                .concatMap(payment -> toPaymentResponse(payment, organisation.getName()))
                                 .collectList()
                 ).map(tuple -> new AdminOrganisationDetailResponse(
                         organisation.getId(),
@@ -122,10 +122,11 @@ public class AdminOrganisationService {
                 subscription.getEndDate(), subscription.getCreatedAt());
     }
 
-    private AdminPaymentResponse toPaymentResponse(Payment payment) {
-        return new AdminPaymentResponse(payment.getId(), payment.getSubscriptionType(), payment.getProvider(),
-                payment.getStatus(), payment.getExpectedAmount(), payment.getReceivedAmount(),
-                payment.getCurrency(), payment.getCreatedAt());
+    private Mono<AdminPaymentResponse> toPaymentResponse(Payment payment, String organisationName) {
+        Mono<Optional<User>> payer = payment.getCreatedBy() == null
+                ? Mono.just(Optional.empty())
+                : userRepository.findById(payment.getCreatedBy()).map(Optional::of).defaultIfEmpty(Optional.empty());
+        return payer.map(user -> AdminPaymentResponse.of(payment, organisationName, user.orElse(null)));
     }
 
     public Mono<AdminSubscriptionSummary> changeSubscription(UUID organisationId, AdminChangeSubscriptionRequest request,

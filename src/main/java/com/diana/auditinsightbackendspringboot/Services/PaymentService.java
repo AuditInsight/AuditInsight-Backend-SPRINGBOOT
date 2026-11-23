@@ -127,14 +127,35 @@ public class PaymentService {
                 .flatMap(payment -> pawaPayService.requestDeposit(payment.getId(), payment.getExpectedAmount(), phoneNumber)
                         .thenReturn(payment)
                         .onErrorResume(e -> {
-                            if (e instanceof PawaPayService.DepositRejectedException) {
-                                return markFailed(payment, e.getMessage()).then(Mono.error(new InvalidRecord(
-                                        "Mobile Money could not start this payment. Check the phone number and try again.")));
+                            if (e instanceof PawaPayService.DepositRejectedException rejected) {
+                                return markFailed(payment, e.getMessage())
+                                        .then(Mono.error(new InvalidRecord(customerMessageFor(rejected))));
                             }
                             log.warn("pawaPay deposit request for payment {} had an unknown outcome; keeping it pending: {}",
                                     payment.getId(), e.getMessage());
                             return Mono.just(payment);
                         }));
+    }
+
+    /**
+     * What the customer is told when pawaPay refuses to start a payment. Only a phone-number problem asks them to
+     * check their number; a problem on our side (wrong token, account settings) must not send them looking for a
+     * mistake they didn't make. No money moves in any of these cases.
+     */
+    static String customerMessageFor(PawaPayService.DepositRejectedException rejected) {
+        String code = rejected.getFailureCode();
+        if (code == null || "INVALID_PHONE_NUMBER".equals(code)) {
+            return "Mobile Money could not start this payment. Check the phone number and try again.";
+        }
+        if ("PROVIDER_TEMPORARILY_UNAVAILABLE".equals(code)) {
+            return "MTN Mobile Money is temporarily unavailable. No money was taken. Please try again in a few minutes.";
+        }
+        if ("AMOUNT_OUT_OF_BOUNDS".equals(code)) {
+            return "Mobile Money cannot take this amount from this number. No money was taken. "
+                    + "Please contact support or pay by card.";
+        }
+        return "Mobile Money payments are temporarily unavailable on our side. No money was taken. "
+                + "Please try again later or contact support.";
     }
 
     public Mono<CardCheckoutResult> startCardCheckout(UUID organisationId, String email, SubscriptionType subscriptionType) {
@@ -214,7 +235,9 @@ public class PaymentService {
                             payment.setStatus(newStatus);
                             payment.setReceivedAmount(receivedAmount);
                             payment.setFailureReason(failureReason);
-                            payment.setUpdatedAt(LocalDateTime.now());
+                            LocalDateTime now = LocalDateTime.now();
+                            payment.setUpdatedAt(now);
+                            payment.setResolvedAt(now);
                             return newStatus == PaymentStatus.SUCCESSFUL
                                     ? activationService.activateFromPayment(payment)
                                             .doOnNext(sub -> payment.setSubscriptionId(sub.getId()))

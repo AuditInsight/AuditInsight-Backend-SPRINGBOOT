@@ -65,4 +65,8 @@ public class Payment {
 
     @Column("updated_at")
     private LocalDateTime updatedAt;
+
+    /** When the payment reached its final outcome (SUCCESSFUL, FAILED, UNDERPAID, EXPIRED); null while PENDING. */
+    @Column("resolved_at")
+    private LocalDateTime resolvedAt;
 }
