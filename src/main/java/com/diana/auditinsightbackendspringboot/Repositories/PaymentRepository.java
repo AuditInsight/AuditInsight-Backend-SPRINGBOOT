@@ -82,6 +82,14 @@ public interface PaymentRepository extends ReactiveCrudRepository<Payment, UUID>
     Flux<Payment> findLedgerPage(String status, String provider, UUID organisationId, LocalDateTime fromTime,
                                  LocalDateTime toTime, String search, int limit, long offset);
 
+    /** Count and money received per status and currency, for the same filters as the ledger. */
+    @Query("SELECT p.status AS status, p.currency AS currency, COUNT(*) AS payments, " +
+            "COALESCE(SUM(p.received_amount), 0) AS received " + LEDGER_FROM_WHERE +
+            "GROUP BY p.status, p.currency ORDER BY p.status, p.currency")
+    Flux<com.diana.auditinsightbackendspringboot.DTOs.PaymentLedgerTotal> ledgerTotals(
+            String status, String provider, UUID organisationId, LocalDateTime fromTime, LocalDateTime toTime,
+            String search);
+
     @Query("SELECT COUNT(*) " + LEDGER_FROM_WHERE)
     Mono<Long> countLedger(String status, String provider, UUID organisationId, LocalDateTime fromTime,
                            LocalDateTime toTime, String search);

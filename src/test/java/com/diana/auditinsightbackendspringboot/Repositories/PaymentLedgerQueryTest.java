@@ -104,6 +104,19 @@ class PaymentLedgerQueryTest {
         assertThat(second.get(0).getCreatedAt()).isEqualTo(NOV_20);
     }
 
+    @Test
+    void totals_countEveryStatusAndAddUpMoneyReceived() {
+        db.sql("UPDATE payments SET received_amount = 15000 WHERE status = 'SUCCESSFUL'").then().block();
+
+        var totals = paymentRepository.ledgerTotals(null, null, null, null, null, null).collectList().block();
+
+        assertThat(totals).extracting(t -> t.getStatus() + ":" + t.getPayments() + ":" + t.getReceived().intValue())
+                .containsExactlyInAnyOrder("FAILED:1:0", "PENDING:1:0", "SUCCESSFUL:2:30000");
+        assertThat(paymentRepository.ledgerTotals(null, null, acme, null, null, null).collectList().block())
+                .extracting(t -> t.getStatus() + ":" + t.getReceived().intValue())
+                .containsExactlyInAnyOrder("FAILED:0", "SUCCESSFUL:15000");
+    }
+
     private void insertUser(long id, String email, String name) {
         db.sql("INSERT INTO users (id, username, full_name, role, verified, active, must_change_password) "
                         + "VALUES (:id, :email, :name, 'CLIENT', TRUE, TRUE, FALSE)")
