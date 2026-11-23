@@ -171,6 +171,27 @@ class PaymentServiceTest {
                 .verify();
     }
 
+    @Test
+    void startMomoCheckout_airtelNumber_isRejectedWithoutChargingOrTouchingTheDatabase() {
+        StepVerifier.create(paymentService.startMomoCheckout(orgId, email, SubscriptionType.MONTHLY, "0731234567"))
+                .expectErrorMatches(e -> e instanceof InvalidRecord && e.getMessage().equals(PaymentService.MTN_ONLY_MESSAGE))
+                .verify();
+        verifyNoInteractions(pawaPayService, paymentRepository, userRepository);
+    }
+
+    @Test
+    void mtnRwandaNumber_acceptsMtnFormatsAndRejectsOthers() {
+        org.junit.jupiter.api.Assertions.assertEquals("0788123456", PaymentService.mtnRwandaNumber("0788123456"));
+        org.junit.jupiter.api.Assertions.assertEquals("0798123456", PaymentService.mtnRwandaNumber("+250 798 123 456"));
+        org.junit.jupiter.api.Assertions.assertEquals("0788123456", PaymentService.mtnRwandaNumber("250788123456"));
+        org.junit.jupiter.api.Assertions.assertEquals("0788123456", PaymentService.mtnRwandaNumber("788123456"));
+        org.junit.jupiter.api.Assertions.assertNull(PaymentService.mtnRwandaNumber("0721234567")); // Airtel
+        org.junit.jupiter.api.Assertions.assertNull(PaymentService.mtnRwandaNumber("0731234567")); // Airtel
+        org.junit.jupiter.api.Assertions.assertNull(PaymentService.mtnRwandaNumber("078812345"));  // too short
+        org.junit.jupiter.api.Assertions.assertNull(PaymentService.mtnRwandaNumber("254712345678")); // Kenya
+        org.junit.jupiter.api.Assertions.assertNull(PaymentService.mtnRwandaNumber(null));
+    }
+
     // ──────────────────────────── getMomoPaymentStatus ────────────────────────────
 
     private Payment pendingMomoPayment() {

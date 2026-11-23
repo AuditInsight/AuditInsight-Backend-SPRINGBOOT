@@ -31,6 +31,26 @@ public class PaymentService {
     /** A MoMo payment younger than this blocks a second one for the same organisation (no double charges). */
     static final long PENDING_WINDOW_MINUTES = 15;
 
+    static final String MTN_ONLY_MESSAGE = "Only MTN Mobile Money numbers (starting with 078 or 079) can be used "
+            + "for payment at the moment. Airtel Money and other networks are not supported yet. "
+            + "Please enter an MTN Rwanda number.";
+
+    /**
+     * Payments are sent to pawaPay as MTN Rwanda deposits, so only MTN Rwanda numbers (078/079) can pay. Accepts
+     * 0788123456, 788123456, 250788123456 and +250 788 123 456; returns the local 10-digit form, or null when the
+     * number isn't an MTN Rwanda number.
+     */
+    static String mtnRwandaNumber(String phoneNumber) {
+        if (phoneNumber == null) return null;
+        String digits = phoneNumber.replaceAll("[^0-9]", "");
+        if (digits.length() == 12 && digits.startsWith("250")) {
+            digits = "0" + digits.substring(3);
+        } else if (digits.length() == 9 && digits.startsWith("7")) {
+            digits = "0" + digits;
+        }
+        return digits.matches("07[89]\\d{7}") ? digits : null;
+    }
+
     /** pawaPay still not knowing a deposit this long after we requested it means the request never reached it. */
     static final long NOT_FOUND_GRACE_MINUTES = 5;
 
@@ -85,7 +105,11 @@ public class PaymentService {
      * resolved by status checks, the pawaPay callback or the reconciliation sweep — never marked failed blindly.
      */
     public Mono<Payment> startMomoCheckout(UUID organisationId, String email, SubscriptionType subscriptionType,
-                                            String phoneNumber) {
+                                            String rawPhoneNumber) {
+        String phoneNumber = mtnRwandaNumber(rawPhoneNumber);
+        if (phoneNumber == null) {
+            return Mono.error(new InvalidRecord(MTN_ONLY_MESSAGE));
+        }
         return resolveMember(organisationId, email)
                 .flatMap(user -> organisationLock.inTransaction(organisationId, () -> {
                     LocalDateTime cutoff = LocalDateTime.now().minusMinutes(PENDING_WINDOW_MINUTES);
