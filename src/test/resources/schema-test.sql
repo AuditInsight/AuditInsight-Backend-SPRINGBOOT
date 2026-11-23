@@ -159,7 +159,8 @@ CREATE TABLE IF NOT EXISTS payments (
     failure_reason           VARCHAR(255),
     created_by               BIGINT,
     created_at               TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
-    updated_at               TIMESTAMP     DEFAULT CURRENT_TIMESTAMP
+    updated_at               TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
+    resolved_at              TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS admin_audit_log (
