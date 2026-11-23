@@ -214,7 +214,9 @@ public class PaymentService {
                             payment.setStatus(newStatus);
                             payment.setReceivedAmount(receivedAmount);
                             payment.setFailureReason(failureReason);
-                            payment.setUpdatedAt(LocalDateTime.now());
+                            LocalDateTime now = LocalDateTime.now();
+                            payment.setUpdatedAt(now);
+                            payment.setResolvedAt(now);
                             return newStatus == PaymentStatus.SUCCESSFUL
                                     ? activationService.activateFromPayment(payment)
                                             .doOnNext(sub -> payment.setSubscriptionId(sub.getId()))

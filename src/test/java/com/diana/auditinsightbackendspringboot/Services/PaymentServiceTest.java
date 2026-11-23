@@ -222,7 +222,7 @@ class PaymentServiceTest {
         when(activationService.activateFromPayment(any())).thenReturn(Mono.just(sub));
 
         StepVerifier.create(paymentService.getMomoPaymentStatus(payment.getId(), email))
-                .expectNextMatches(p -> p.getStatus() == PaymentStatus.SUCCESSFUL)
+                .expectNextMatches(p -> p.getStatus() == PaymentStatus.SUCCESSFUL && p.getResolvedAt() != null)
                 .verifyComplete();
 
         verify(activationService, times(1)).activateFromPayment(any());
@@ -305,7 +305,8 @@ class PaymentServiceTest {
 
         StepVerifier.create(paymentService.getMomoPaymentStatus(payment.getId(), email))
                 .expectNextMatches(p -> p.getStatus() == PaymentStatus.FAILED
-                        && "PAYER_NOT_FOUND: Payer not found".equals(p.getFailureReason()))
+                        && "PAYER_NOT_FOUND: Payer not found".equals(p.getFailureReason())
+                        && p.getResolvedAt() != null)
                 .verifyComplete();
 
         verify(activationService, never()).activateFromPayment(any());
@@ -321,7 +322,7 @@ class PaymentServiceTest {
                 new PawaPayService.StatusResult(PawaPayService.PawaPayStatus.PENDING, null, null)));
 
         StepVerifier.create(paymentService.getMomoPaymentStatus(payment.getId(), email))
-                .expectNextMatches(p -> p.getStatus() == PaymentStatus.PENDING)
+                .expectNextMatches(p -> p.getStatus() == PaymentStatus.PENDING && p.getResolvedAt() == null)
                 .verifyComplete();
 
         verify(paymentRepository, never()).save(any());

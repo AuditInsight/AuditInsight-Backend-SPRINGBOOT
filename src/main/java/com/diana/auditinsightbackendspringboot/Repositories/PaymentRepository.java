@@ -38,14 +38,14 @@ public interface PaymentRepository extends ReactiveCrudRepository<Payment, UUID>
      */
     @Modifying
     @Query("UPDATE payments SET status = :status, received_amount = :receivedAmount, " +
-            "failure_reason = :failureReason, updated_at = CURRENT_TIMESTAMP " +
+            "failure_reason = :failureReason, updated_at = CURRENT_TIMESTAMP, resolved_at = CURRENT_TIMESTAMP " +
             "WHERE id = :id AND status = 'PENDING'")
     Mono<Integer> resolveIfPending(UUID id, PaymentStatus status, BigDecimal receivedAmount, String failureReason);
 
     /** Same compare-and-set as {@link #resolveIfPending}, from any expected status (used to recover a late success). */
     @Modifying
     @Query("UPDATE payments SET status = :status, received_amount = :receivedAmount, " +
-            "failure_reason = :failureReason, updated_at = CURRENT_TIMESTAMP " +
+            "failure_reason = :failureReason, updated_at = CURRENT_TIMESTAMP, resolved_at = CURRENT_TIMESTAMP " +
             "WHERE id = :id AND status = :expected")
     Mono<Integer> resolveIfStatus(UUID id, PaymentStatus expected, PaymentStatus status, BigDecimal receivedAmount,
                                   String failureReason);
