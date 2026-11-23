@@ -58,6 +58,34 @@ public interface PaymentRepository extends ReactiveCrudRepository<Payment, UUID>
 
     Flux<Payment> findAllByOrganisationIdAndStatus(UUID organisationId, PaymentStatus status);
 
+    // ── Super Admin payments ledger ────────────────────────────────────────────────────────────
+    // Every filter is optional (null = any). {@code search} matches, case-insensitively, the organisation name, the
+    // payer's name or email, the phone charged, or the provider reference. {@code fromTime} is inclusive and
+    // {@code toTime} exclusive, both on when the payment was started.
+
+    String LEDGER_FROM_WHERE = "FROM payments p " +
+            "LEFT JOIN organisation o ON o.id = p.organisation_id " +
+            "LEFT JOIN users u ON u.id = p.created_by " +
+            "WHERE (:status IS NULL OR p.status = :status) " +
+            "AND (:provider IS NULL OR p.provider = :provider) " +
+            "AND (:organisationId IS NULL OR p.organisation_id = :organisationId) " +
+            "AND (:fromTime IS NULL OR p.created_at >= :fromTime) " +
+            "AND (:toTime IS NULL OR p.created_at < :toTime) " +
+            "AND (:search IS NULL " +
+            "  OR LOWER(o.name) LIKE LOWER(CONCAT('%', :search, '%')) " +
+            "  OR LOWER(u.username) LIKE LOWER(CONCAT('%', :search, '%')) " +
+            "  OR LOWER(u.full_name) LIKE LOWER(CONCAT('%', :search, '%')) " +
+            "  OR p.payer_phone LIKE CONCAT('%', :search, '%') " +
+            "  OR LOWER(p.provider_transaction_id) LIKE LOWER(CONCAT('%', :search, '%'))) ";
+
+    @Query("SELECT p.* " + LEDGER_FROM_WHERE + "ORDER BY p.created_at DESC LIMIT :limit OFFSET :offset")
+    Flux<Payment> findLedgerPage(String status, String provider, UUID organisationId, LocalDateTime fromTime,
+                                 LocalDateTime toTime, String search, int limit, long offset);
+
+    @Query("SELECT COUNT(*) " + LEDGER_FROM_WHERE)
+    Mono<Long> countLedger(String status, String provider, UUID organisationId, LocalDateTime fromTime,
+                           LocalDateTime toTime, String search);
+
     /** Successful payments that never got their paid period (activation failed after the status was saved). */
     Flux<Payment> findAllByStatusAndSubscriptionIdIsNull(PaymentStatus status);
 
