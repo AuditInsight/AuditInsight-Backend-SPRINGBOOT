@@ -204,6 +204,29 @@ class AdminEndpointsSecurityTest {
     }
 
     @Test
+    void paymentsLedger_onlyAdminAllowed() {
+        assertForbiddenForNonAdmins(token -> get(token, "/api/admin/payments"));
+        assertForbiddenForNonAdmins(token -> get(token, "/api/admin/payments/totals"));
+        get(adminToken, "/api/admin/payments").expectStatus().isOk()
+                .expectBody().jsonPath("$.items").isArray();
+        get(adminToken, "/api/admin/payments/totals").expectStatus().isOk();
+    }
+
+    @Test
+    void paymentsLedger_acceptsFiltersWithATimeZone_andRejectsUnknownStatus() {
+        webTestClient.get().uri(b -> b.path("/api/admin/payments")
+                        .queryParam("status", "SUCCESSFUL")
+                        .queryParam("provider", "MOMO")
+                        .queryParam("from", "{from}")
+                        .queryParam("to", "{to}")
+                        .queryParam("search", "0788")
+                        .build("2026-11-20T00:00:00+02:00", "2026-11-21T00:00:00+02:00"))
+                .header("Authorization", "Bearer " + adminToken).exchange()
+                .expectStatus().isOk();
+        get(adminToken, "/api/admin/payments?status=PAID").expectStatus().isBadRequest();
+    }
+
+    @Test
     void listAuditLog_onlyAdminAllowed() {
         assertForbiddenForNonAdmins(token -> get(token, "/api/admin/audit-log"));
         get(adminToken, "/api/admin/audit-log").expectStatus().isOk();
