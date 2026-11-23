@@ -2,6 +2,8 @@ package com.diana.auditinsightbackendspringboot.Admin;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -98,6 +100,17 @@ public class PaymentSetupService {
                 new Card(cardEnv, secretSet, isSet(flutterwaveWebhookHash), flutterwaveRedirectUrl,
                         FLUTTERWAVE_WEBHOOK_PATH),
                 List.copyOf(problems), List.copyOf(warnings));
+    }
+
+    /** Writes the setup check to the log at every start, so a missing or sandbox setting shows up straight away. */
+    @EventListener(ApplicationReadyEvent.class)
+    public void logAtStartup() {
+        SetupStatus s = status();
+        log.info("[payments-setup] Mobile Money: {} ({}), token {}, provider {}. Card: {}, webhook hash {}.",
+                s.mobileMoney().environment(), s.mobileMoney().baseUrl(), s.mobileMoney().tokenSet() ? "set" : "MISSING",
+                s.mobileMoney().provider(), s.card().environment(), s.card().webhookHashSet() ? "set" : "MISSING");
+        s.problems().forEach(p -> log.error("[payments-setup] PROBLEM: {}", p));
+        s.warnings().forEach(w -> log.warn("[payments-setup] {}", w));
     }
 
     private static boolean isSet(String value) {
