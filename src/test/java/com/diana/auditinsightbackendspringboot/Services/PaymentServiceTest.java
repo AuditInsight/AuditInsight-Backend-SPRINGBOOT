@@ -122,6 +122,37 @@ class PaymentServiceTest {
     }
 
     @Test
+    void startMomoCheckout_pawaPaySetupProblem_doesNotBlameThePhoneNumber() {
+        stubCheckoutBasics();
+        when(pawaPayService.requestDeposit(any(), any(), anyString()))
+                .thenReturn(Mono.error(new PawaPayService.DepositRejectedException(
+                        "pawaPay rejected the deposit request: 401 (AUTHENTICATION_ERROR)", "AUTHENTICATION_ERROR", null)));
+        when(paymentRepository.resolveIfPending(any(), eq(PaymentStatus.FAILED), isNull(), contains("AUTHENTICATION_ERROR")))
+                .thenReturn(Mono.just(1));
+
+        StepVerifier.create(paymentService.startMomoCheckout(orgId, email, SubscriptionType.MONTHLY, "0788123456"))
+                .expectErrorMatches(e -> e instanceof InvalidRecord
+                        && !e.getMessage().contains("phone number")
+                        && e.getMessage().contains("No money was taken"))
+                .verify();
+    }
+
+    @Test
+    void customerMessageFor_eachRejection() {
+        org.assertj.core.api.Assertions.assertThat(PaymentService.customerMessageFor(
+                new PawaPayService.DepositRejectedException("x", "INVALID_PHONE_NUMBER", null))).contains("phone number");
+        org.assertj.core.api.Assertions.assertThat(PaymentService.customerMessageFor(
+                new PawaPayService.DepositRejectedException("x", null))).contains("phone number");
+        org.assertj.core.api.Assertions.assertThat(PaymentService.customerMessageFor(
+                new PawaPayService.DepositRejectedException("x", "PROVIDER_TEMPORARILY_UNAVAILABLE", null)))
+                .contains("temporarily unavailable").contains("No money was taken");
+        org.assertj.core.api.Assertions.assertThat(PaymentService.customerMessageFor(
+                new PawaPayService.DepositRejectedException("x", "AMOUNT_OUT_OF_BOUNDS", null))).contains("cannot take this amount");
+        org.assertj.core.api.Assertions.assertThat(PaymentService.customerMessageFor(
+                new PawaPayService.DepositRejectedException("x", "AUTHORISATION_ERROR", null))).contains("on our side");
+    }
+
+    @Test
     void startMomoCheckout_unknownOutcome_keepsPaymentPendingInsteadOfFailingIt() {
         stubCheckoutBasics();
         when(pawaPayService.requestDeposit(any(), any(), anyString()))
