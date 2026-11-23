@@ -210,6 +210,12 @@ class AdminEndpointsSecurityTest {
         get(adminToken, "/api/admin/payments").expectStatus().isOk()
                 .expectBody().jsonPath("$.items").isArray();
         get(adminToken, "/api/admin/payments/totals").expectStatus().isOk();
+        assertForbiddenForNonAdmins(token -> get(token, "/api/admin/payments/setup"));
+        get(adminToken, "/api/admin/payments/setup").expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.mobileMoney.tokenSet").isEqualTo(true)
+                .jsonPath("$.mobileMoney.callbackPath").isEqualTo("/api/subscriptions/webhooks/pawapay")
+                .jsonPath("$.problems").isArray();
     }
 
     @Test

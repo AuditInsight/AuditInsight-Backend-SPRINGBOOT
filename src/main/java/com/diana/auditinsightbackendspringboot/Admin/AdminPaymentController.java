@@ -26,9 +26,19 @@ import java.util.UUID;
 public class AdminPaymentController {
 
     private final AdminPaymentService adminPaymentService;
+    private final PaymentSetupService paymentSetupService;
 
-    public AdminPaymentController(AdminPaymentService adminPaymentService) {
+    public AdminPaymentController(AdminPaymentService adminPaymentService, PaymentSetupService paymentSetupService) {
         this.adminPaymentService = adminPaymentService;
+        this.paymentSetupService = paymentSetupService;
+    }
+
+    @GetMapping("/setup")
+    @Operation(summary = "Payment setup check",
+            description = "Whether Mobile Money and card payments are configured on this server and whether they use "
+                    + "live or sandbox money. Reads settings only; never contacts the providers or returns secrets.")
+    public Mono<PaymentSetupService.SetupStatus> setup() {
+        return Mono.fromSupplier(paymentSetupService::status);
     }
 
     @GetMapping
