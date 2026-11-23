@@ -80,6 +80,49 @@ class PawaPayServiceTest {
     }
 
     @Test
+    void requestDeposit_rejectedWithCode_carriesTheCodeAndIsNotASetupProblem() {
+        when(restTemplate.exchange(contains("/v2/deposits"), eq(HttpMethod.POST),
+                any(HttpEntity.class), eq(Map.class)))
+                .thenReturn(ResponseEntity.ok(Map.of("depositId", "x", "status", "REJECTED",
+                        "failureReason", Map.of("failureCode", "INVALID_PHONE_NUMBER",
+                                "failureMessage", "The phone number is invalid"))));
+
+        StepVerifier.create(pawaPayService.requestDeposit(UUID.randomUUID(), BigDecimal.TEN, "0788123456"))
+                .expectErrorSatisfies(e -> {
+                    PawaPayService.DepositRejectedException r = (PawaPayService.DepositRejectedException) e;
+                    org.assertj.core.api.Assertions.assertThat(r.getFailureCode()).isEqualTo("INVALID_PHONE_NUMBER");
+                    org.assertj.core.api.Assertions.assertThat(r.isConfigurationProblem()).isFalse();
+                    org.assertj.core.api.Assertions.assertThat(r.getMessage()).contains("The phone number is invalid");
+                })
+                .verify();
+    }
+
+    @Test
+    void requestDeposit_wrongToken401_isASetupProblemNotAPhoneProblem() {
+        when(restTemplate.exchange(contains("/v2/deposits"), eq(HttpMethod.POST),
+                any(HttpEntity.class), eq(Map.class)))
+                .thenThrow(org.springframework.web.client.HttpClientErrorException.create(
+                        HttpStatus.UNAUTHORIZED, "Unauthorized", new HttpHeaders(), new byte[0], null));
+
+        StepVerifier.create(pawaPayService.requestDeposit(UUID.randomUUID(), BigDecimal.TEN, "0788123456"))
+                .expectErrorSatisfies(e -> {
+                    PawaPayService.DepositRejectedException r = (PawaPayService.DepositRejectedException) e;
+                    org.assertj.core.api.Assertions.assertThat(r.getFailureCode()).isEqualTo("AUTHENTICATION_ERROR");
+                    org.assertj.core.api.Assertions.assertThat(r.isConfigurationProblem()).isTrue();
+                })
+                .verify();
+    }
+
+    @Test
+    void rejected_readsTheCodeFromAnErrorBody() {
+        PawaPayService.DepositRejectedException r = PawaPayService.rejected("pawaPay rejected the deposit request: 400",
+                Map.of("failureReason", Map.of("failureCode", "AMOUNT_OUT_OF_BOUNDS")), 400, null);
+
+        org.assertj.core.api.Assertions.assertThat(r.getFailureCode()).isEqualTo("AMOUNT_OUT_OF_BOUNDS");
+        org.assertj.core.api.Assertions.assertThat(r.isConfigurationProblem()).isFalse();
+    }
+
+    @Test
     void requestDeposit_nonSuccessHttpStatus_throws() {
         when(restTemplate.exchange(contains("/v2/deposits"), eq(HttpMethod.POST),
                 any(HttpEntity.class), eq(Map.class)))
