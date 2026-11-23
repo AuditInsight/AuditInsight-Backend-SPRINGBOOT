@@ -146,4 +146,46 @@ class AdminOrganisationServiceTest {
 
         verify(activationService, never()).adminChangeSubscription(any(), any(), any(), any(), any());
     }
+
+    @Test
+    void getOrganisationDetail_paymentsShowWhoPaidTheReferenceAndWhenItSettled() {
+        com.diana.auditinsightbackendspringboot.Models.Payment payment = new com.diana.auditinsightbackendspringboot.Models.Payment();
+        payment.setId(UUID.randomUUID());
+        payment.setOrganisationId(orgId);
+        payment.setSubscriptionType(SubscriptionType.MONTHLY);
+        payment.setProvider(com.diana.auditinsightbackendspringboot.Enum.PaymentProvider.MOMO);
+        payment.setStatus(com.diana.auditinsightbackendspringboot.Enum.PaymentStatus.SUCCESSFUL);
+        payment.setExpectedAmount(new java.math.BigDecimal("15000"));
+        payment.setReceivedAmount(new java.math.BigDecimal("15000"));
+        payment.setCurrency("RWF");
+        payment.setPayerPhone("0788123456");
+        payment.setProviderTransactionId("MTN-REF-123");
+        payment.setCreatedBy(7L);
+        payment.setCreatedAt(LocalDateTime.of(2026, 11, 20, 16, 0));
+        payment.setResolvedAt(LocalDateTime.of(2026, 11, 20, 16, 1));
+
+        User payer = new User();
+        payer.setId(7L);
+        payer.setUsername("payer@acme.org");
+        payer.setFullName("Aline Uwase");
+
+        when(organisationRepository.findById(orgId)).thenReturn(Mono.just(organisation()));
+        when(organisationMemberRepository.findAllByOrganisationId(orgId)).thenReturn(Flux.empty());
+        when(subscriptionRepository.findAllByOrganisationIdOrderByCreatedAtDesc(orgId)).thenReturn(Flux.empty());
+        when(paymentRepository.findAllByOrganisationIdOrderByCreatedAtDesc(orgId)).thenReturn(Flux.just(payment));
+        when(userRepository.findById(7L)).thenReturn(Mono.just(payer));
+
+        StepVerifier.create(adminOrganisationService.getOrganisationDetail(orgId))
+                .assertNext(detail -> {
+                    var p = detail.getPayments().get(0);
+                    org.assertj.core.api.Assertions.assertThat(p.getPayerName()).isEqualTo("Aline Uwase");
+                    org.assertj.core.api.Assertions.assertThat(p.getPayerEmail()).isEqualTo("payer@acme.org");
+                    org.assertj.core.api.Assertions.assertThat(p.getPayerPhone()).isEqualTo("0788123456");
+                    org.assertj.core.api.Assertions.assertThat(p.getProviderReference()).isEqualTo("MTN-REF-123");
+                    org.assertj.core.api.Assertions.assertThat(p.getOrganisationName()).isEqualTo("Acme NGO");
+                    org.assertj.core.api.Assertions.assertThat(p.getResolvedAt()).isNotNull();
+                    org.assertj.core.api.Assertions.assertThat(p.getCreatedAt().getOffset()).isNotNull();
+                })
+                .verifyComplete();
+    }
 }
