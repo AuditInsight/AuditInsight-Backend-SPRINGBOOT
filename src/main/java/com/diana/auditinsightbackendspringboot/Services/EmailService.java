@@ -44,6 +44,17 @@ public class EmailService {
     @Value("${FRONTEND_URL:https://www.auditinsight.tech}")
     private String frontendUrl;
 
+    /** A button to the login page; with an invite token, the page fills it in so the member just signs in. */
+    private String loginButton(String label, String inviteToken) {
+        String url = frontendUrl.replaceAll("/+$", "") + "/log-in";
+        if (inviteToken != null && !inviteToken.isBlank()) {
+            url += "?inviteToken=" + java.net.URLEncoder.encode(inviteToken, java.nio.charset.StandardCharsets.UTF_8);
+        }
+        return "<p style='margin:24px 0;'><a href='" + escapeHtml(url) + "'"
+                + " style='display:inline-block;background:#1e3a8a;color:#fff;padding:12px 22px;"
+                + "border-radius:6px;text-decoration:none;font-weight:bold;'>" + escapeHtml(label) + "</a></p>";
+    }
+
     public void sendEmail(String to, String subject, String htmlContent) {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
@@ -203,12 +214,14 @@ public class EmailService {
                       </tr>
                     </table>
                     <p>Log in with the credentials above and enter the invitation token when prompted. This token expires in <b>72 hours</b>.</p>
+                    %s
                     <p style='color:#e74c3c;font-weight:bold;'>
                       You will be required to change your password after your first login.
                     </p>
                     <small>If you did not expect this invitation, please contact your organisation administrator.</small>
                   </div>
-                </body></html>""", orgName, email, defaultPassword, role, token);
+                </body></html>""", orgName, email, defaultPassword, role, token,
+                loginButton("Log in to AuditInsight", token));
         sendEmail(email, "Your AuditInsight account for " + orgName, html);
     }
 
@@ -239,9 +252,11 @@ public class EmailService {
                       <span style='font-family:monospace;font-size:0.9em;background:#f4f4f4;padding:12px 20px;
                                    border-radius:5px;border:1px solid #ccc;word-break:break-all;display:inline-block;'>%s</span>
                     </div>
+                    %s
                     <small>If you did not expect this, please ignore this email.</small>
                   </div>
-                </body></html>""", orgName, name, orgName, role, orgName, orgId, token);
+                </body></html>""", orgName, name, orgName, role, orgName, orgId, token,
+                loginButton("Log in to accept the invitation", token));
         sendEmail(email, "You've been invited to join " + orgName + " on AuditInsight", html);
     }
 
