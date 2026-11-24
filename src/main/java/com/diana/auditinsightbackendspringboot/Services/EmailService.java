@@ -155,28 +155,6 @@ public class EmailService {
         sendEmail(email, "Your AuditInsight Account Has Been Deactivated", html);
     }
 
-    public void sendInvitationEmail(String email, String orgName, String token) {
-        if (email == null || orgName == null) {
-            log.error("Cannot send invitation email: missing email or orgName");
-            return;
-        }
-        String html = String.format("""
-                <html><body style='font-family:Arial,sans-serif;'>
-                  <div style='max-width:600px;margin:auto;padding:20px;border:1px solid #ddd;'>
-                    <h2>You've been invited to join <b>%s</b> on AuditInsight</h2>
-                    <p>Click the link below to register and join the organisation:</p>
-                    <p><a href='http://localhost:8080/register?inviteToken=%s'
-                          style='background:#4CAF50;color:#fff;padding:10px 20px;
-                                 text-decoration:none;border-radius:4px;'>
-                      Accept Invitation
-                    </a></p>
-                    <p>This invitation expires in 72 hours.</p>
-                    <small>If you did not expect this, please ignore this email.</small>
-                  </div>
-                </body></html>""", orgName, token);
-        sendEmail(email, "You're invited to join " + orgName + " on AuditInsight", html);
-    }
-
     public void sendAddedToOrgEmail(String email, String name, String orgName, String role) {
         if (email == null || orgName == null) {
             log.error("Cannot send org-added email: missing email or orgName");
