@@ -40,6 +40,10 @@ public class EmailService {
     @Value("${BREVO_SENDER_NAME:AuditInsight}")
     private String fromName;
 
+    /** Public address of the web app, used for links in emails. */
+    @Value("${FRONTEND_URL:https://www.auditinsight.tech}")
+    private String frontendUrl;
+
     public void sendEmail(String to, String subject, String htmlContent) {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
@@ -411,11 +415,15 @@ public class EmailService {
                     <p>Hello <b>%s</b>,</p>
                     <p><b>%s</b> has asked you to sign the document <b>%s</b> on AuditInsight.</p>
                     %s
-                    <p>Log in to AuditInsight, open the document and sign it from the Signatures section.</p>
+                    <p>Log in to AuditInsight and open the <b>Signatures</b> page: the document is listed under
+                       <b>Waiting for your signature</b>, with a Sign button.</p>
+                    <p><a href='%s/log-in'
+                          style='display:inline-block;background:#1e3a8a;color:#fff;padding:10px 18px;
+                                 border-radius:6px;text-decoration:none;font-weight:bold;'>Log in to sign</a></p>
                     <small>This is an automated notification from AuditInsight.</small>
                   </div>
                 </body></html>""", escapeHtml(name != null ? name : email), escapeHtml(requesterName),
-                escapeHtml(documentName), note);
+                escapeHtml(documentName), note, escapeHtml(frontendUrl.replaceAll("/+$", "")));
         sendEmail(email, requesterName + " asked you to sign " + documentName, html);
     }
 
